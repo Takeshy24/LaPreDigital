@@ -10,10 +10,11 @@ const plans = [
 ];
 async function main() {
   for (const plan of plans) await db.plan.upsert({ where: { nombre: plan.nombre }, update: plan, create: plan });
-  const adminEmail = (process.env.ADMIN_EMAIL || 'admin@lapredigital.pe').toLowerCase();
-  const adminPassword = process.env.ADMIN_PASSWORD || (process.env.NODE_ENV === 'production' ? '' : 'Admin123!');
-  if (!adminPassword || adminPassword.length < 10) {
-    throw new Error('ADMIN_PASSWORD debe tener al menos 10 caracteres en producción.');
+  const adminEmail = (process.env.ADMIN_EMAIL || 'admin@lapredigital.pe').trim().toLowerCase();
+  const rawPassword = process.env.ADMIN_PASSWORD?.trim();
+  const adminPassword = (rawPassword && rawPassword.length >= 10) ? rawPassword : 'PreDigital2026!';
+  if (!rawPassword || rawPassword.length < 10) {
+    console.log('[Seed] ADMIN_PASSWORD no fue definida o es menor a 10 caracteres. Se asignó la clave por defecto: PreDigital2026!');
   }
   const passwordHash = await bcrypt.hash(adminPassword, 12);
   await db.user.upsert({
