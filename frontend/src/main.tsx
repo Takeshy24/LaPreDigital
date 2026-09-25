@@ -38,7 +38,8 @@ import {
   Zap,
   Sliders,
   Search,
-  Eye
+  Eye,
+  ChevronRight
 } from 'lucide-react';
 
 import './tailwind.css';
@@ -60,6 +61,7 @@ import './runner.css';
 import './plan-selection.css';
 import './ai-action-plan.css';
 import './stripe-checkout.css';
+import './mobile-responsive.css';
 
 const API = import.meta.env.VITE_API_URL || 'http://localhost:4000/api';
 
@@ -221,19 +223,86 @@ function SystemHeader({ user, section }: { user?: any; section: string }) {
 }
 
 function Header({ go }: { go: (s: string) => void }) {
+  const [mobileOpen, setMobileOpen] = useState(false);
+
   return (
-    <header>
-      <Logo />
-      <nav>
-        <a href="#beneficios">Beneficios</a>
-        <a onClick={() => go('plans')}>Planes</a>
-        <a onClick={() => go('login')}>Iniciar sesión</a>
-        <button onClick={() => go('register')}>
-          Empieza gratis <ArrowRight size={16} />
+    <>
+      <header>
+        <Logo />
+        <nav>
+          <a href="#beneficios">Beneficios</a>
+          <a onClick={() => go('plans')}>Planes</a>
+          <a onClick={() => go('login')}>Iniciar sesión</a>
+          <button onClick={() => go('register')}>
+            Empieza gratis <ArrowRight size={16} />
+          </button>
+        </nav>
+        <button
+          className="mobile mobile-menu-btn"
+          aria-label="Abrir menú de navegación"
+          onClick={() => setMobileOpen(true)}
+        >
+          <Menu size={23} />
         </button>
-      </nav>
-      <Menu className="mobile" />
-    </header>
+      </header>
+
+      {mobileOpen && (
+        <>
+          <div
+            className="public-mobile-backdrop"
+            onClick={() => setMobileOpen(false)}
+          />
+          <div className="public-mobile-drawer" role="dialog" aria-modal="true">
+            <div className="public-mobile-drawer-head">
+              <Logo />
+              <button
+                className="public-mobile-close"
+                aria-label="Cerrar menú"
+                onClick={() => setMobileOpen(false)}
+              >
+                <X size={20} />
+              </button>
+            </div>
+            <div className="public-mobile-links">
+              <a
+                href="#beneficios"
+                onClick={() => setMobileOpen(false)}
+              >
+                <span>Beneficios y Metodología</span>
+                <ChevronRight size={16} />
+              </a>
+              <button
+                onClick={() => {
+                  go('plans');
+                  setMobileOpen(false);
+                }}
+              >
+                <span>Planes y servicios</span>
+                <ChevronRight size={16} />
+              </button>
+              <button
+                onClick={() => {
+                  go('login');
+                  setMobileOpen(false);
+                }}
+              >
+                <span>Iniciar sesión</span>
+                <ChevronRight size={16} />
+              </button>
+              <button
+                className="public-mobile-cta"
+                onClick={() => {
+                  go('register');
+                  setMobileOpen(false);
+                }}
+              >
+                Empieza gratis <ArrowRight size={16} />
+              </button>
+            </div>
+          </div>
+        </>
+      )}
+    </>
   );
 }
 
