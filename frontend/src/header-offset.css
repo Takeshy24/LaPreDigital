@@ -1,0 +1,9 @@
+.dash main {
+  padding-top: 96px !important;
+}
+
+@media (max-width: 768px) {
+  .dash main {
+    padding-top: 84px !important;
+  }
+}

@@ -1,0 +1,152 @@
+/* system-header.css - Barra de Estado y Contexto Académico */
+
+.system-header {
+  position: fixed;
+  z-index: 20;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 70px;
+  padding: 0 clamp(24px, 4vw, 56px) 0 clamp(110px, 8vw, 170px);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: rgba(255, 255, 255, 0.92);
+  border-bottom: 1px solid #e2e8f0;
+  backdrop-filter: blur(16px);
+  box-shadow: 0 4px 20px rgba(11, 31, 56, 0.04);
+  box-sizing: border-box;
+}
+
+.system-context {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  font-size: 11.5px;
+  letter-spacing: 1px;
+}
+
+.system-context span {
+  font-weight: 800;
+  color: #0b1f38;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.system-context b {
+  color: #cbd5e1;
+  font-weight: 400;
+}
+
+.system-context strong {
+  color: #1e5ee5;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.system-actions {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+}
+
+.system-streak-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: #fff7ed;
+  border: 1px solid #fed7aa;
+  color: #ea580c;
+  font-size: 11.5px;
+  font-weight: 700;
+  padding: 5px 11px;
+  border-radius: 20px;
+}
+
+.notification {
+  position: relative;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  background: #ffffff;
+  color: #0b1f38;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.notification:hover {
+  background: #f8fafc;
+  border-color: #cbd5e1;
+}
+
+.notification i {
+  position: absolute;
+  right: 9px;
+  top: 9px;
+  width: 7px;
+  height: 7px;
+  background: #f59e0b;
+  border-radius: 50%;
+  border: 2px solid #ffffff;
+}
+
+.system-user {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 4px 8px;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: background 0.2s ease;
+}
+
+.system-user:hover {
+  background: #f8fafc;
+}
+
+.system-avatar {
+  width: 38px;
+  height: 38px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #0e2646 0%, #1e5ee5 100%);
+  color: #ffffff;
+  font-size: 12px;
+  font-weight: 800;
+  box-shadow: 0 2px 8px rgba(14, 38, 70, 0.2);
+}
+
+.system-user b,
+.system-user small {
+  display: block;
+  line-height: 1.25;
+}
+
+.system-user b {
+  font-size: 13px;
+  color: #0b1f38;
+}
+
+.system-user small {
+  color: #64748b;
+  font-size: 11px;
+}
+
+@media (max-width: 768px) {
+  .system-header {
+    height: 64px;
+    padding: 0 16px 0 76px;
+  }
+  .system-context,
+  .system-streak-pill,
+  .system-user > div:not(.system-avatar),
+  .system-user > svg {
+    display: none;
+  }
+}

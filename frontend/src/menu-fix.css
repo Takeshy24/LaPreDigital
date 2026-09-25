@@ -1,0 +1,11 @@
+/* Desktop layout: the fixed drawer must never reserve a narrow grid column. */
+.dash{display:block!important;min-width:0}
+.dash main{width:100%!important;max-width:none!important;min-width:0;padding:72px clamp(96px,8vw,150px)!important}
+.dash-grid{width:100%;max-width:1240px}
+.brand-row{position:relative;min-height:52px;padding:6px 12px 31px!important}
+.dash .app-sidebar .collapse{position:absolute;right:10px;top:2px;width:auto;height:38px;padding:0 11px;display:flex;gap:6px;place-items:center;background:#ffffff14;font-size:12px}
+.dash .app-sidebar .logo{padding-right:50px;white-space:nowrap}
+.hamburger.is-open{opacity:0;pointer-events:none}
+.dash .app-sidebar .menu-close{position:absolute!important;top:2px;right:2px;width:48px;height:48px;margin:0!important;padding:0!important;display:grid!important;place-items:center;background:#ffffff12!important;border:1px solid #ffffff36!important;color:#fff!important;border-radius:12px;z-index:5}.dash .app-sidebar .menu-close:hover{background:#F7A112!important;color:#12375E!important}
+@media (min-width:900px){.hamburger{left:26px;top:24px}.nav-backdrop{display:none}.dash main{padding-left:clamp(112px,9vw,174px)!important;padding-right:clamp(48px,6vw,110px)!important}.dash-grid{max-width:1280px}.app-sidebar.open~main{filter:none}}
+@media (max-width:700px){.dash main{padding:86px 22px 40px!important}.dash-grid{max-width:none}.brand-row{padding-bottom:26px!important}}

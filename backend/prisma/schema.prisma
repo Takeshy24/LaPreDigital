@@ -1,0 +1,122 @@
+generator client {
+  provider = "prisma-client-js"
+}
+datasource db {
+  provider = "postgresql"
+  url = env("DATABASE_URL")
+}
+enum Role {
+ STUDENT
+ GUARDIAN
+ ADMIN
+}
+enum CommercialStage {
+ BUYER
+ LEAD
+ PAYER
+ CUSTOMER
+ TURNED
+}
+enum PaymentChannel {
+ CARD
+ YAPE
+ PLIN
+}
+enum TransactionStatus {
+ INICIADA
+ PENDIENTE
+ CONFIRMADA
+ RECHAZADA
+ VENCIDA
+ EN_REVISION
+}
+enum AccessStatus {
+ PENDIENTE
+ ACTIVADO
+ SUSPENDIDO
+ INCIDENCIA
+}
+model User {
+ id String @id @default(cuid())
+ nombres String
+ apellidos String
+ email String @unique
+ passwordHash String
+ telefono String?
+ rol Role @default(STUDENT)
+ etapaComercial CommercialStage @default(BUYER)
+ createdAt DateTime @default(now())
+ studentProfile StudentProfile?
+ guardianProfile GuardianProfile?
+ payments Payment[]
+}
+model StudentProfile {
+ userId String @id
+ user User @relation(fields:[userId],references:[id])
+ edad Int?
+ nivelEducativo String?
+ carreraInteres String?
+ areaRefuerzo String?
+ fechaExamen DateTime?
+ subscriptions Subscription[]
+}
+model GuardianProfile {
+ userId String @id
+ user User @relation(fields:[userId],references:[id])
+ relacionConEstudiante String?
+ autorizadoContacto Boolean @default(false)
+}
+model StudentGuardian {
+ studentId String
+ guardianId String
+ @@id([studentId,guardianId])
+}
+model Plan {
+ id String @id @default(cuid())
+ nombre String @unique
+ descripcion String
+ precioMensual Float
+ precioSemestral Float?
+ diasPrueba Int @default(0)
+ activo Boolean @default(true)
+ subscriptions Subscription[]
+ payments Payment[]
+}
+model Subscription {
+ id String @id @default(cuid())
+ studentId String
+ student StudentProfile @relation(fields:[studentId],references:[userId])
+ planId String
+ plan Plan @relation(fields:[planId],references:[id])
+ fechaInicio DateTime @default(now())
+ fechaFin DateTime
+ estadoAcceso AccessStatus @default(PENDIENTE)
+ estadoOnboarding String @default("PENDIENTE")
+ payments Payment[]
+}
+model Payment {
+ id String @id @default(cuid())
+ userId String
+ user User @relation(fields:[userId],references:[id])
+ subscriptionId String?
+ subscription Subscription? @relation(fields:[subscriptionId],references:[id])
+ planId String
+ plan Plan @relation(fields:[planId],references:[id])
+ canalPago PaymentChannel
+ monto Float
+ estadoTransaccion TransactionStatus @default(INICIADA)
+ codigoOperacion String @unique
+ fechaInicio DateTime @default(now())
+ fechaConfirmacion DateTime?
+ autorizacionRecurrencia Boolean @default(false)
+ attempts PaymentAttempt[]
+}
+model PaymentAttempt {
+ id String @id @default(cuid())
+ paymentId String
+ payment Payment @relation(fields:[paymentId],references:[id])
+ canalPago PaymentChannel
+ estado String
+ detalle String?
+ createdAt DateTime @default(now())
+}
