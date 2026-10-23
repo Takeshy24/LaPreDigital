@@ -49,6 +49,7 @@ model User {
  studentProfile StudentProfile?
  guardianProfile GuardianProfile?
  payments Payment[]
+ learningProgress LearningProgress[]
 }
 model StudentProfile {
  userId String @id
@@ -119,4 +120,22 @@ model PaymentAttempt {
  estado String
  detalle String?
  createdAt DateTime @default(now())
+}
+
+model LearningProgress {
+ id String @id @default(cuid())
+ studentId String
+ student User @relation(fields:[studentId],references:[id],onDelete:Cascade)
+ activityKey String
+ activityType String
+ title String
+ subject String?
+ totalQuestions Int @default(0)
+ correctAnswers Int @default(0)
+ scorePercent Int @default(0)
+ durationMinutes Int @default(0)
+ areaBreakdown Json?
+ completedAt DateTime @default(now())
+ @@unique([studentId,activityKey])
+ @@index([studentId,completedAt])
 }

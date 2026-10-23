@@ -138,6 +138,63 @@ const requireStudentPlan = (minimumLevel: number) => async (req: RequestWithUser
   return next();
 };
 
+async function learningSummary(studentId: string) {
+  const now = new Date();
+  const periodStart = new Date(now);
+  periodStart.setUTCHours(0, 0, 0, 0);
+  periodStart.setUTCDate(periodStart.getUTCDate() - 6);
+  const items = await db.learningProgress.findMany({
+    where: { studentId },
+    orderBy: { completedAt: 'desc' }
+  });
+  const recent = items.filter(item => item.completedAt >= periodStart);
+  const totalMinutes = recent.reduce((sum, item) => sum + item.durationMinutes, 0);
+  const scored = recent.filter(item => item.totalQuestions > 0);
+  const averageScore = scored.length
+    ? Math.round(scored.reduce((sum, item) => sum + item.scorePercent, 0) / scored.length)
+    : 0;
+  const completedDates = new Set(items.map(item => item.completedAt.toISOString().slice(0, 10)));
+  let streakDays = 0;
+  const cursor = new Date(now);
+  cursor.setUTCHours(0, 0, 0, 0);
+  if (!completedDates.has(cursor.toISOString().slice(0, 10))) cursor.setUTCDate(cursor.getUTCDate() - 1);
+  while (completedDates.has(cursor.toISOString().slice(0, 10))) {
+    streakDays += 1;
+    cursor.setUTCDate(cursor.getUTCDate() - 1);
+  }
+  const daily = Array.from({ length: 7 }, (_, index) => {
+    const date = new Date(periodStart);
+    date.setUTCDate(periodStart.getUTCDate() + index);
+    const key = date.toISOString().slice(0, 10);
+    const minutes = recent
+      .filter(item => item.completedAt.toISOString().slice(0, 10) === key)
+      .reduce((sum, item) => sum + item.durationMinutes, 0);
+    return {
+      date: key,
+      label: date.toLocaleDateString('es-PE', { weekday: 'short', timeZone: 'UTC' }).replace('.', ''),
+      minutes
+    };
+  });
+  const completedKeys = items.map(item => item.activityKey);
+  const nextActivity = completedKeys.includes('lesson-patterns')
+    ? { key: 'simulation-week-3', title: 'Simulacro integral de práctica', subject: 'Evaluación general', durationMinutes: 20, level: 'Intermedio' }
+    : { key: 'lesson-patterns', title: 'Patrones y sucesiones numéricas', subject: 'Razonamiento Matemático', durationMinutes: 35, level: 'Intermedio' };
+  return {
+    completedActivities: items.length,
+    weeklyCompleted: recent.length,
+    weeklyMinutes: totalMinutes,
+    weeklyHours: Number((totalMinutes / 60).toFixed(1)),
+    weeklyGoal: 5,
+    weeklyProgress: Math.min(100, Math.round((recent.length / 5) * 100)),
+    averageScore,
+    streakDays,
+    daily,
+    completedKeys,
+    nextActivity,
+    recent: items.slice(0, 6)
+  };
+}
+
 app.post('/api/auth/register', authLimiter, async (req, res) => {
   try {
     const { password, carreraInteres, rol, ...details } = registration.parse(req.body);
@@ -217,6 +274,39 @@ app.post('/api/onboarding/complete', auth([Role.STUDENT]), async (req: RequestWi
 });
 app.get('/api/plans', async (_req, res) => res.json(await db.plan.findMany({ where: { activo: true }, orderBy: { precioMensual: 'asc' } })));
 
+app.get('/api/student/progress/summary', auth([Role.STUDENT]), async (req: RequestWithUser, res) => {
+  return res.json(await learningSummary(req.user!.id));
+});
+
+app.post('/api/student/activities/complete', auth([Role.STUDENT]), requireStudentPlan(1), async (req: RequestWithUser, res) => {
+  const input = z.object({
+    activityKey: z.string().trim().min(2).max(80).regex(/^[a-z0-9-]+$/),
+    activityType: z.enum(['lesson', 'exercise', 'simulation', 'diagnostic']),
+    title: z.string().trim().min(2).max(160),
+    subject: z.string().trim().max(100).optional(),
+    totalQuestions: z.number().int().min(0).max(200),
+    correctAnswers: z.number().int().min(0).max(200),
+    durationMinutes: z.number().int().min(1).max(240),
+    areaBreakdown: z.array(z.object({
+      area: z.string().trim().min(2).max(100),
+      correct: z.number().int().min(0).max(200),
+      total: z.number().int().min(1).max(200)
+    })).max(20).optional()
+  }).safeParse(req.body);
+  if (!input.success || input.data.correctAnswers > input.data.totalQuestions) {
+    return res.status(400).json({ message: 'No pudimos registrar esta actividad.' });
+  }
+  const scorePercent = input.data.totalQuestions
+    ? Math.round((input.data.correctAnswers / input.data.totalQuestions) * 100)
+    : 100;
+  const activity = await db.learningProgress.upsert({
+    where: { studentId_activityKey: { studentId: req.user!.id, activityKey: input.data.activityKey } },
+    update: { ...input.data, scorePercent, completedAt: new Date() },
+    create: { ...input.data, studentId: req.user!.id, scorePercent }
+  });
+  return res.status(201).json({ activity, summary: await learningSummary(req.user!.id) });
+});
+
 app.post('/api/guardians/link', auth([Role.GUARDIAN]), async (req: RequestWithUser, res) => {
   const input = z.object({ studentEmail: z.string().email(), relacionConEstudiante: z.string().min(2), autorizadoContacto: z.boolean().default(true) }).safeParse(req.body);
   if (!input.success) return res.status(400).json({ message: 'Completa los datos del estudiante.' });
@@ -247,8 +337,9 @@ app.get('/api/guardians/students', auth([Role.GUARDIAN]), async (req: RequestWit
     }
   });
 
-  const students = studentUsers.map(s => {
+  const students = await Promise.all(studentUsers.map(async s => {
     const sub = s.studentProfile?.subscriptions[0];
+    const progress = await learningSummary(s.id);
     return {
       id: s.id,
       nombres: s.nombres,
@@ -257,17 +348,19 @@ app.get('/api/guardians/students', auth([Role.GUARDIAN]), async (req: RequestWit
       telefono: s.telefono,
       carrera: s.studentProfile?.carreraInteres || 'Ingeniería / Ciencias',
       plan: sub?.plan?.nombre || 'Sin plan activo',
-      areaRefuerzo: s.studentProfile?.areaRefuerzo || 'Intermedio Competitivo',
+      validoHasta: sub?.fechaFin || null,
+      areaRefuerzo: s.studentProfile?.areaRefuerzo || 'Por diagnosticar',
+      actividadesRecientes: progress.recent,
       metricas: {
-        asistencia: 94,
-        horasEstudio: 6.5,
-        sesionesCompletadas: 12,
-        puntajeActual: 740,
-        puntajeCorte: 810,
-        percentil: 'Top 18% general'
+        constancia: progress.weeklyProgress,
+        horasEstudio: progress.weeklyHours,
+        sesionesCompletadas: progress.completedActivities,
+        puntajeActual: progress.averageScore ? progress.averageScore * 10 : null,
+        promedio: progress.averageScore,
+        rachaDias: progress.streakDays
       }
     };
-  });
+  }));
 
   return res.json({ students });
 });
@@ -350,6 +443,10 @@ app.post('/api/payments/create', auth([Role.STUDENT, Role.GUARDIAN]), async (req
   const studentId = await payableStudent(req.user!, input.data.studentId);
   const plan = await db.plan.findUnique({ where: { id: input.data.planId } });
   if (!studentId || !plan || plan.diasPrueba > 0) return res.status(400).json({ message: 'No se pudo preparar este pago.' });
+  const currentPlan = await activePlanForStudent(studentId);
+  if (currentPlan && planLevel(plan.nombre) < planLevel(currentPlan.nombre)) {
+    return res.status(409).json({ message: `Tu acceso a ${currentPlan.nombre} sigue activo. Podrás elegir un plan menor cuando termine el periodo actual.` });
+  }
   const expected = input.data.monto;
   if (![plan.precioMensual, plan.precioSemestral].filter(Boolean).some(price => Math.abs(expected - Number(price)) < .01)) return res.status(400).json({ message: 'El monto no corresponde al plan elegido.' });
   await db.user.update({ where: { id: studentId }, data: { etapaComercial: CommercialStage.LEAD } });
@@ -368,6 +465,10 @@ app.post('/api/payments/stripe/checkout-session', auth([Role.STUDENT, Role.GUARD
   const amount = months === 6 ? Number(plan?.precioSemestral) : Number(plan?.precioMensual);
   if (!studentId || !plan || plan.diasPrueba > 0 || !Number.isFinite(amount) || amount <= 0) {
     return res.status(400).json({ message: 'No se pudo preparar el cobro para este plan.' });
+  }
+  const currentPlan = await activePlanForStudent(studentId);
+  if (currentPlan && planLevel(plan.nombre) < planLevel(currentPlan.nombre)) {
+    return res.status(409).json({ message: `Tu acceso a ${currentPlan.nombre} sigue activo. Podrás elegir un plan menor cuando termine el periodo actual.` });
   }
 
   const payer = await db.user.findUnique({ where: { id: req.user!.id }, select: { email: true } });
@@ -465,11 +566,20 @@ app.get('/api/admin/users/:id/progress', auth([Role.ADMIN]), async (req, res) =>
     }
   });
   if (!user) return res.status(404).json({ message: 'Estudiante no encontrado.' });
-  const active = user.studentProfile?.subscriptions.find(item => item.estadoAcceso === AccessStatus.ACTIVADO);
+  const active = user.studentProfile?.subscriptions.find(item => item.estadoAcceso === AccessStatus.ACTIVADO && item.fechaFin > new Date());
+  const progress = await learningSummary(user.id);
   return res.json({
     student: { id: user.id, nombres: user.nombres, apellidos: user.apellidos, email: user.email, etapaComercial: user.etapaComercial, carreraInteres: user.studentProfile?.carreraInteres },
     subscription: active || user.studentProfile?.subscriptions[0] || null,
-    academic: { avanceSemanal: active ? 68 : 0, horasEstudiadas: active ? 6.5 : 0, actividadesCompletadas: active ? 12 : 0, proximaActividad: active ? 'Patrones y sucesiones' : null },
+    academic: {
+      avanceSemanal: progress.weeklyProgress,
+      horasEstudiadas: progress.weeklyHours,
+      actividadesCompletadas: progress.completedActivities,
+      promedio: progress.averageScore,
+      rachaDias: progress.streakDays,
+      proximaActividad: active ? progress.nextActivity.title : null,
+      recientes: progress.recent
+    },
     payments: user.payments
   });
 });
@@ -502,47 +612,26 @@ app.get('/api/student/guardian', auth([Role.STUDENT]), requireStudentPlan(4), as
 
 app.post('/api/student/guardian', auth([Role.STUDENT]), requireStudentPlan(4), async (req: RequestWithUser, res) => {
   const schema = z.object({
-    nombres: z.string().trim().min(2, 'Ingresa nombres válidos.'),
-    apellidos: z.string().trim().min(2, 'Ingresa apellidos válidos.'),
     email: z.string().trim().email('Ingresa un correo electrónico válido.').transform(v => v.toLowerCase()),
-    telefono: z.string().trim().min(6, 'Ingresa un teléfono válido.'),
     relacion: z.string().trim().min(2, 'Indica el parentesco.')
   });
   const parsed = schema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ message: 'Datos de apoderado incompletos.', issues: parsed.error.flatten() });
 
   const studentId = req.user!.id;
-  const { nombres, apellidos, email, telefono, relacion } = parsed.data;
+  const { email, relacion } = parsed.data;
 
-  let guardian = await db.user.findUnique({ where: { email } });
-  if (!guardian) {
-    guardian = await db.user.create({
-      data: {
-        nombres,
-        apellidos,
-        email,
-        telefono,
-        rol: Role.GUARDIAN,
-        passwordHash: await bcrypt.hash('Pre123456!', 10),
-        guardianProfile: {
-          create: {
-            relacionConEstudiante: relacion,
-            autorizadoContacto: true
-          }
-        }
-      }
-    });
-  } else {
-    await db.user.update({
-      where: { id: guardian.id },
-      data: { nombres, apellidos, telefono }
-    });
-    await db.guardianProfile.upsert({
-      where: { userId: guardian.id },
-      create: { userId: guardian.id, relacionConEstudiante: relacion, autorizadoContacto: true },
-      update: { relacionConEstudiante: relacion, autorizadoContacto: true }
+  const guardian = await db.user.findUnique({ where: { email }, include: { guardianProfile: true } });
+  if (!guardian || guardian.rol !== Role.GUARDIAN) {
+    return res.status(404).json({
+      message: 'El apoderado debe crear primero una cuenta con ese correo y elegir el rol “Soy apoderado”.'
     });
   }
+  await db.guardianProfile.upsert({
+    where: { userId: guardian.id },
+    create: { userId: guardian.id, relacionConEstudiante: relacion, autorizadoContacto: true },
+    update: { relacionConEstudiante: relacion, autorizadoContacto: true }
+  });
 
   await db.studentGuardian.upsert({
     where: {
@@ -563,10 +652,10 @@ app.post('/api/student/guardian', auth([Role.STUDENT]), requireStudentPlan(4), a
     message: 'Apoderado vinculado con éxito.',
     guardian: {
       id: guardian.id,
-      nombres,
-      apellidos,
+      nombres: guardian.nombres,
+      apellidos: guardian.apellidos,
       email,
-      telefono,
+      telefono: guardian.telefono,
       relacion
     }
   });
@@ -593,6 +682,7 @@ app.get('/api/student/report-data', auth([Role.STUDENT]), requireStudentPlan(4),
   const guardian = guardianLink
     ? await db.user.findUnique({ where: { id: guardianLink.guardianId }, include: { guardianProfile: true } })
     : null;
+  const progress = await learningSummary(student.id);
 
   return res.json({
     fechaEmision: new Date().toLocaleDateString('es-PE', { day: '2-digit', month: 'long', year: 'numeric' }),
@@ -611,22 +701,19 @@ app.get('/api/student/report-data', auth([Role.STUDENT]), requireStudentPlan(4),
         }
       : null,
     metricas: {
-      asistencia: 94,
-      horasEstudio: 6.5,
-      sesionesCompletadas: 12,
-      sesionesTotales: 14,
-      puntajeActual: 740,
-      puntajeCorte: 810,
-      percentil: 'Top 18% general'
+      constancia: progress.weeklyProgress,
+      horasEstudio: progress.weeklyHours,
+      sesionesCompletadas: progress.completedActivities,
+      metaSemanal: progress.weeklyGoal,
+      puntajeActual: progress.averageScore ? progress.averageScore * 10 : null,
+      promedio: progress.averageScore,
+      rachaDias: progress.streakDays
     },
-    desgloseAreas: [
-      { area: 'Razonamiento Matemático', efectividad: 82, nivel: 'Sobresaliente' },
-      { area: 'Razonamiento Verbal', efectividad: 65, nivel: 'Requiere refuerzo' },
-      { area: 'Ciencias y Biología', efectividad: 78, nivel: 'Competitivo' },
-      { area: 'Física y Química', efectividad: 70, nivel: 'En progresión' }
-    ],
+    actividadesRecientes: progress.recent,
     observacionPedagogica:
-      'El postulante mantiene una disciplina destacada en razonamiento cuantitativo y ciencias. Se recomienda sostener el ritmo diario de práctica y reforzar la resolución de analogías y textos complejos en razonamiento verbal.'
+      progress.completedActivities
+        ? `El estudiante completó ${progress.completedActivities} actividades y acumula ${progress.weeklyHours} horas durante los últimos siete días. Conviene continuar con ${progress.nextActivity.title}.`
+        : 'Aún no hay actividades completadas. Se recomienda iniciar el diagnóstico para construir una línea base de seguimiento.'
   });
 });
 
@@ -668,26 +755,72 @@ app.get('/api/student/academic-analytics', auth([Role.STUDENT]), requireStudentP
     'Ingeniería de Sistemas';
 
   const careerInfo = careersCutoff[foundKey];
-  const puntajeActual = 740;
-  const brecha = careerInfo.corte - puntajeActual;
-  const ratio = Math.min(Math.max(Math.round((puntajeActual / careerInfo.corte) * 100), 40), 99);
+  const attempts = await db.learningProgress.findMany({
+    where: { studentId: req.user!.id, totalQuestions: { gt: 0 } },
+    orderBy: { completedAt: 'desc' }
+  });
+  const totalQuestions = attempts.reduce((sum, item) => sum + item.totalQuestions, 0);
+  const totalCorrect = attempts.reduce((sum, item) => sum + item.correctAnswers, 0);
+  const puntajeActual = totalQuestions >= 10 ? Math.round((totalCorrect / totalQuestions) * 1000) : null;
+  const brecha = puntajeActual === null ? null : careerInfo.corte - puntajeActual;
+  const ratio = puntajeActual === null ? 0 : Math.min(100, Math.max(0, Math.round((puntajeActual / careerInfo.corte) * 100)));
 
-  let probabilidadTexto = 'Alta';
-  let probabilidadColor = '#10b981';
-  let estadoVacante = 'En zona de vacante';
-  if (brecha > 60) {
-    probabilidadTexto = 'Competitiva en desarrollo';
+  let probabilidadTexto = 'Sin línea base';
+  let probabilidadColor = '#64748b';
+  let estadoVacante = 'Completa una evaluación para estimar tu avance';
+  if (brecha !== null && brecha > 60) {
+    probabilidadTexto = 'En desarrollo';
     probabilidadColor = '#f59e0b';
-    estadoVacante = 'A ' + brecha + ' pts de zona segura';
-  } else if (brecha > 0) {
-    probabilidadTexto = 'Muy alta';
+    estadoVacante = 'A ' + brecha + ' pts del puntaje de referencia';
+  } else if (brecha !== null && brecha > 0) {
+    probabilidadTexto = 'Cerca del objetivo';
     probabilidadColor = '#1e5ee5';
-    estadoVacante = 'A tiro de vacante (' + brecha + ' pts)';
-  } else {
-    probabilidadTexto = 'Excelente';
+    estadoVacante = 'A ' + brecha + ' pts del puntaje de referencia';
+  } else if (brecha !== null) {
+    probabilidadTexto = 'Objetivo alcanzado';
     probabilidadColor = '#10b981';
-    estadoVacante = 'Supera corte por +' + Math.abs(brecha) + ' pts';
+    estadoVacante = 'Supera la referencia por ' + Math.abs(brecha) + ' pts';
   }
+
+  const areaMap = new Map<string, { correct: number; total: number; minutes: number }>();
+  for (const item of attempts) {
+    const breakdown = Array.isArray(item.areaBreakdown)
+      ? item.areaBreakdown as Array<{ area: string; correct: number; total: number }>
+      : [];
+    if (breakdown.length) {
+      for (const part of breakdown) {
+        const current = areaMap.get(part.area) || { correct: 0, total: 0, minutes: 0 };
+        current.correct += part.correct;
+        current.total += part.total;
+        current.minutes += item.durationMinutes * (part.total / item.totalQuestions);
+        areaMap.set(part.area, current);
+      }
+    } else {
+      const area = item.subject || 'Evaluación general';
+      const current = areaMap.get(area) || { correct: 0, total: 0, minutes: 0 };
+      current.correct += item.correctAnswers;
+      current.total += item.totalQuestions;
+      current.minutes += item.durationMinutes;
+      areaMap.set(area, current);
+    }
+  }
+  const colors = ['blue', 'amber', 'emerald', 'indigo'];
+  const radarAreas = Array.from(areaMap.entries()).map(([area, values], index) => {
+    const pct = values.total ? Math.round((values.correct / values.total) * 100) : 0;
+    const seconds = values.total ? Math.round((values.minutes * 60) / values.total) : 0;
+    return {
+      area,
+      pct,
+      color: colors[index % colors.length],
+      aciertos: `${values.correct} / ${values.total}`,
+      tiempoMedio: seconds ? `${seconds}s` : 'Sin dato',
+      estado: pct >= 80 ? 'Dominio fuerte' : pct >= 60 ? 'En consolidación' : 'Prioridad de refuerzo'
+    };
+  });
+  const totalMinutes = attempts.reduce((sum, item) => sum + item.durationMinutes, 0);
+  const averageSeconds = totalQuestions >= 10 ? Math.round((totalMinutes * 60) / totalQuestions) : null;
+  const priorityArea = [...radarAreas].sort((a, b) => a.pct - b.pct)[0]?.area || student.studentProfile?.areaRefuerzo || 'Razonamiento Matemático';
+  const progress = await learningSummary(req.user!.id);
 
   return res.json({
     carreraSeleccionada: foundKey,
@@ -706,83 +839,53 @@ app.get('/api/student/academic-analytics', auth([Role.STUDENT]), requireStudentP
       probabilidadColor,
       estadoVacante,
       areaGeneral: careerInfo.area,
-      percentilEstudiante: 82,
-      totalPreguntasSimuladas: 180
+      percentilEstudiante: null,
+      totalPreguntasSimuladas: totalQuestions
     },
     velocidad: {
-      tiempoPromedioSegundos: 88,
-      tiempoOptimoSegundos: 80,
-      ritmoEstado: 'Ritmo competitivo',
-      recomendacionVelocidad:
-        'Ganas buen tiempo en ciencias y biología. En razonamiento verbal podrías recortar 8 segundos por texto para asegurar tiempo de revisión final.'
+      tiempoPromedioSegundos: averageSeconds,
+      tiempoOptimoSegundos: 120,
+      ritmoEstado: averageSeconds === null ? 'Sin datos suficientes' : averageSeconds <= 120 ? 'Ritmo dentro de la meta' : 'Ritmo por fortalecer',
+      recomendacionVelocidad: averageSeconds === null
+        ? 'Completa un bloque de ejercicios o un simulacro para medir tu ritmo real de respuesta.'
+        : averageSeconds <= 120
+          ? 'Mantén este ritmo y reserva unos minutos para revisar las respuestas dudosas.'
+          : 'Practica bloques cortos con cronómetro para acercarte gradualmente a dos minutos por pregunta.'
     },
-    radarAreas: [
-      {
-        area: 'Razonamiento Matemático',
-        pct: 82,
-        color: 'blue',
-        aciertos: '29 / 35',
-        tiempoMedio: '1m 45s',
-        estado: 'Dominio fuerte'
-      },
-      {
-        area: 'Razonamiento Verbal',
-        pct: 65,
-        color: 'amber',
-        aciertos: '20 / 30',
-        tiempoMedio: '1m 15s',
-        estado: 'Prioridad alta de refuerzo'
-      },
-      {
-        area: 'Ciencias y Biología',
-        pct: 78,
-        color: 'emerald',
-        aciertos: '23 / 30',
-        tiempoMedio: '1m 30s',
-        estado: 'Zona competitiva'
-      },
-      {
-        area: 'Física y Química',
-        pct: 70,
-        color: 'indigo',
-        aciertos: '18 / 25',
-        tiempoMedio: '2m 05s',
-        estado: 'Progresión favorable'
-      }
-    ],
+    radarAreas,
     temasPrioritarios: [
       {
-        materia: 'Raz. Verbal',
-        tema: 'Analogías y Relaciones Semánticas',
-        payoff: '+18 pts en prueba general',
+        materia: priorityArea,
+        tema: `Refuerzo dirigido en ${priorityArea}`,
+        payoff: 'Prioridad según tus resultados',
         dificultad: 'Intermedio',
-        efectividadActual: '58%',
+        efectividadActual: radarAreas[0] ? `${[...radarAreas].sort((a, b) => a.pct - b.pct)[0].pct}%` : 'Por medir',
         runnerType: 'exercise',
         accion: 'Resolver bloque'
       },
       {
-        materia: 'Física UNT',
-        tema: 'Cinemática y Dinámica Lineal',
-        payoff: '+15 pts en ciencias',
-        dificultad: 'Avanzado',
-        efectividadActual: '62%',
+        materia: 'Evaluación general',
+        tema: 'Práctica cronometrada de precisión',
+        payoff: 'Mejora medible del ritmo',
+        dificultad: 'Progresivo',
+        efectividadActual: averageSeconds ? `${averageSeconds}s/pregunta` : 'Por medir',
         runnerType: 'exercise',
         accion: 'Resolver bloque'
       },
       {
         materia: 'Raz. Matemático',
         tema: 'Sucesiones y Sumatorias Notables',
-        payoff: '+12 pts cuantitativos',
+        payoff: 'Continúa tu ruta semanal',
         dificultad: 'Intermedio',
-        efectividadActual: '74%',
+        efectividadActual: progress.completedKeys.includes('lesson-patterns') ? 'Completado' : 'Pendiente',
         runnerType: 'lesson',
         accion: 'Repasar teoría'
       }
     ],
     planEstrategicoSemanal: [
-      'Dedica un bloque de 25 min diarios a razonamiento verbal (comprensión de textos DECO y analogías semánticas).',
-      'Realiza una prueba corta de 10 ejercicios de física con cronómetro para calibrar el tiempo medio a menos de 1m 50s.',
-      'Rinde el simulacro general programado para este sábado para validar el avance del percentil.'
+      `Dedica un bloque de 25 minutos a ${priorityArea} y registra el resultado para ajustar tu ruta.`,
+      'Resuelve una práctica corta con cronómetro y revisa cada error antes de repetirla.',
+      `Completa ${progress.nextActivity.title.toLowerCase()} para actualizar tu proyección con evidencia reciente.`
     ]
   });
 });
@@ -798,7 +901,7 @@ app.get('/api/materials', auth([Role.STUDENT]), requireStudentPlan(2), async (_r
         'Compendio teórico completo con fórmulas de término enésimo, propiedades de sumatorias y 35 ejercicios modelo resueltos paso a paso.',
       paginas: 18,
       tamano: '2.4 MB',
-      formato: 'PDF Oficial',
+      formato: 'Guía digital',
       destacado: true,
       sintesis:
         'Una progresión aritmética (P.A.) es una sucesión en la que cada término se obtiene sumando al anterior una cantidad constante llamada razón (r). Las series notables permiten calcular sumatorias de los primeros números naturales, pares, impares y cuadrados.',
@@ -824,7 +927,7 @@ app.get('/api/materials', auth([Role.STUDENT]), requireStudentPlan(2), async (_r
         'Estrategias de análisis de textos científicos y filosóficos tipo DECO de la UNT, campos léxicos y relaciones lógicas.',
       paginas: 14,
       tamano: '1.8 MB',
-      formato: 'PDF Oficial',
+      formato: 'Guía digital',
       destacado: false,
       sintesis:
         'Las analogías semánticas miden la capacidad de identificar relaciones de semejanza entre pares de conceptos (parte-todo, causa-efecto, intensidad, sinonimia condicionada). En comprensión de textos UNT se evalúa la jerarquía de ideas, la intención del autor y la extrapolación semántica.',
@@ -848,7 +951,7 @@ app.get('/api/materials', auth([Role.STUDENT]), requireStudentPlan(2), async (_r
         'Resumen gráfico de glúcidos, lípidos, proteínas, ácidos nucleicos y organelas celulares con preguntas de fijación.',
       paginas: 22,
       tamano: '3.1 MB',
-      formato: 'PDF Oficial',
+      formato: 'Guía digital',
       destacado: true,
       sintesis:
         'Las biomoléculas orgánicas son los pilares de los seres vivos: glúcidos (fuente de energía inmediata), lípidos (reserva y membranas), proteínas (estructurales y biocatalizadoras) y ácidos nucleicos (almacenamiento de información genética en ADN y ARN).',
@@ -872,7 +975,7 @@ app.get('/api/materials', auth([Role.STUDENT]), requireStudentPlan(2), async (_r
         'Formulario esencial de teoremas de ángulos interiores, exteriores, cevianas, medianas y bisectrices.',
       paginas: 16,
       tamano: '2.0 MB',
-      formato: 'PDF Oficial',
+      formato: 'Guía digital',
       destacado: false,
       sintesis:
         'Los triángulos constituyen la base de la geometría euclidiana plana. Los teoremas angulares fundamentales y los criterios de congruencia (LAL, ALA, LLL) permiten resolver configuraciones complejas de polígonos y figuras inscritas.',
@@ -897,7 +1000,7 @@ app.get('/api/materials', auth([Role.STUDENT]), requireStudentPlan(2), async (_r
         'Guía metodológica de vectores de posición, velocidad instantánea, ecuaciones horarias y gráficos cinemáticos.',
       paginas: 20,
       tamano: '2.7 MB',
-      formato: 'PDF Oficial',
+      formato: 'Guía digital',
       destacado: true,
       sintesis:
         'La cinemática describe el movimiento de los cuerpos sin atender las causas que lo originan. El MRU se caracteriza por velocidad constante (aceleración nula) y el MRUV por aceleración constante en módulo y dirección.',
@@ -923,7 +1026,7 @@ app.get('/api/materials', auth([Role.STUDENT]), requireStudentPlan(2), async (_r
         'Números cuánticos, principio de Aufbau, regla de Hund y distribución por niveles y subniveles.',
       paginas: 15,
       tamano: '1.9 MB',
-      formato: 'PDF Oficial',
+      formato: 'Guía digital',
       destacado: false,
       sintesis:
         'El átomo moderno consta de un núcleo positivo denso (protones y neutrones) y una nube electrónica descrita por orbitales probabilísticos según la mecánica cuántica de Schrödinger.',
@@ -1090,9 +1193,42 @@ app.get('/api/diagnostic', auth([Role.STUDENT]), requireStudentPlan(1), async (_
 });
 
 app.post('/api/diagnostic/submit', auth([Role.STUDENT]), requireStudentPlan(1), async (req: RequestWithUser, res) => {
-  const { respuestas } = req.body;
-  const items = Array.isArray(respuestas) ? respuestas : [];
-  const total = items.length || 15;
+  const parsed = z.object({
+    respuestas: z.array(z.object({
+      preguntaId: z.string().min(1).max(30),
+      materia: z.string().min(2).max(100),
+      esCorrecto: z.boolean(),
+      elegida: z.string().min(1).max(200)
+    })).length(15)
+  }).safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ message: 'Completa las 15 preguntas antes de enviar el diagnóstico.' });
+  const answerKey: Record<string, { answer: string; subject: string }> = {
+    'd-1': { answer: '111', subject: 'Raz. Matemático' },
+    'd-2': { answer: '22', subject: 'Raz. Matemático' },
+    'd-3': { answer: '14 años', subject: 'Raz. Matemático' },
+    'd-4': { answer: 'Desenlace : Novela', subject: 'Raz. Verbal' },
+    'd-5': { answer: 'tergiversar', subject: 'Raz. Verbal' },
+    'd-6': { answer: 'Su capacidad de absorber perturbaciones y recuperar su estructura', subject: 'Raz. Verbal' },
+    'd-7': { answer: 'Celulosa', subject: 'Biología' },
+    'd-8': { answer: '25% (1/4)', subject: 'Biología' },
+    'd-9': { answer: 'Páncreas', subject: 'Biología' },
+    'd-10': { answer: '50 m', subject: 'Física' },
+    'd-11': { answer: '3 m/s²', subject: 'Física' },
+    'd-12': { answer: '72 J', subject: 'Física' },
+    'd-13': { answer: '7', subject: 'Química' },
+    'd-14': { answer: 'Enlace Iónico o Electrovalente', subject: 'Química' },
+    'd-15': { answer: 'CO2 y H2O', subject: 'Química' }
+  };
+  const uniqueIds = new Set(parsed.data.respuestas.map(item => item.preguntaId));
+  if (uniqueIds.size !== 15 || parsed.data.respuestas.some(item => !answerKey[item.preguntaId])) {
+    return res.status(400).json({ message: 'El diagnóstico contiene respuestas inválidas o repetidas.' });
+  }
+  const items = parsed.data.respuestas.map(item => ({
+    ...item,
+    materia: answerKey[item.preguntaId].subject,
+    esCorrecto: item.elegida === answerKey[item.preguntaId].answer
+  }));
+  const total = items.length;
   const aciertos = items.filter((r: any) => r.esCorrecto).length;
   const puntaje = Math.round((aciertos / total) * 1000);
 
@@ -1117,7 +1253,7 @@ app.post('/api/diagnostic/submit', auth([Role.STUDENT]), requireStudentPlan(1), 
     area,
     aciertos: data.aciertos,
     total: data.total || 3,
-    porcentaje: data.total ? Math.round((data.aciertos / data.total) * 100) : 70
+    porcentaje: data.total ? Math.round((data.aciertos / data.total) * 100) : 0
   }));
 
   desglose.sort((a, b) => a.porcentaje - b.porcentaje);

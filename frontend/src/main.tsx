@@ -42,7 +42,6 @@ import {
   ChevronRight
 } from 'lucide-react';
 
-import './tailwind.css';
 import './style.css';
 import './admin.css';
 import './menu.css';
@@ -74,6 +73,21 @@ type Plan = {
   diasPrueba: number;
 };
 
+type ProgressSummary = {
+  completedActivities: number;
+  weeklyCompleted: number;
+  weeklyMinutes: number;
+  weeklyHours: number;
+  weeklyGoal: number;
+  weeklyProgress: number;
+  averageScore: number;
+  streakDays: number;
+  daily: Array<{ date: string; label: string; minutes: number }>;
+  completedKeys: string[];
+  nextActivity: { key: string; title: string; subject: string; durationMinutes: number; level: string };
+  recent: any[];
+};
+
 const api = async (path: string, method = 'GET', body?: unknown) => {
   const r = await fetch(API + path, {
     method,
@@ -83,8 +97,15 @@ const api = async (path: string, method = 'GET', body?: unknown) => {
     },
     body: body ? JSON.stringify(body) : undefined
   });
-  const d = await r.json();
-  if (!r.ok) throw Error(d.message);
+  const d = await r.json().catch(() => ({ message: 'El servidor devolvió una respuesta inesperada.' }));
+  if (!r.ok) {
+    if (r.status === 401 && path !== '/auth/login') {
+      localStorage.removeItem('token');
+      sessionStorage.removeItem('pendingPlan');
+      location.hash = '/login';
+    }
+    throw Error(d.message || 'No pudimos completar la operación.');
+  }
   return d;
 };
 
@@ -95,41 +116,6 @@ const Logo = () => (
 );
 
 const money = (n: number) => (n === 0 ? 'Gratis' : `S/ ${n.toFixed(2)}`);
-
-const DEFAULT_PLANS: Plan[] = [
-  {
-    id: 'cmu6co4et0000uy5c8sfsy6d9',
-    nombre: 'Explora UNT',
-    descripcion: 'Diagnóstico, contenidos de muestra y 1 simulacro.',
-    precioMensual: 0,
-    precioSemestral: 0,
-    diasPrueba: 14
-  },
-  {
-    id: 'cmu6co4eu0001uy5c03zwh03x',
-    nombre: 'Ruta UNT',
-    descripcion: 'Materiales, ejercicios, ruta de estudio y evaluaciones.',
-    precioMensual: 39.90,
-    precioSemestral: undefined,
-    diasPrueba: 0
-  },
-  {
-    id: 'cmu6co4eu0002uy5crfvk6qxb',
-    nombre: 'Meta UNT',
-    descripcion: 'Personalización completa, simulacros, análisis y seguimiento mediante IA.',
-    precioMensual: 79.90,
-    precioSemestral: 399.90,
-    diasPrueba: 0
-  },
-  {
-    id: 'cmu6co4eu0003uy5ce7hefw50',
-    nombre: 'Meta UNT Plus',
-    descripcion: 'Personalización completa, simulacros, análisis y seguimiento mediante IA. Reportes al apoderado, alertas avanzadas y atención prioritaria.',
-    precioMensual: 99.90,
-    precioSemestral: 499.90,
-    diasPrueba: 0
-  }
-];
 
 const benefitsFor = (name: string): string[] =>
   ({
@@ -167,6 +153,7 @@ function getActiveSubscription(user: any) {
 
 function SystemHeader({ user, section }: { user?: any; section: string }) {
   const [profile, setProfile] = useState<any>(user);
+  const [streakDays, setStreakDays] = useState(0);
 
   useEffect(() => {
     if (localStorage.token) {
@@ -175,6 +162,14 @@ function SystemHeader({ user, section }: { user?: any; section: string }) {
         .catch(() => {});
     }
   }, [user]);
+
+  useEffect(() => {
+    if (user?.rol === 'STUDENT' && localStorage.token) {
+      api('/student/progress/summary')
+        .then((summary: ProgressSummary) => setStreakDays(summary.streakDays))
+        .catch(() => setStreakDays(0));
+    }
+  }, [user?.id, user?.rol]);
 
   const current = profile || user;
   const initials = current
@@ -199,10 +194,12 @@ function SystemHeader({ user, section }: { user?: any; section: string }) {
           )}
         </div>
         <div className="system-actions">
-          <div className="system-streak-pill" title="Días consecutivos de estudio esta semana">
-            <Flame size={15} />
-            <span>4 días de racha</span>
-          </div>
+          {current?.rol === 'STUDENT' && (
+            <div className="system-streak-pill" title="Días consecutivos con actividades completadas">
+              <Flame size={15} />
+              <span>{streakDays} {streakDays === 1 ? 'día' : 'días'} de racha</span>
+            </div>
+          )}
           <button className="notification" aria-label="Notificaciones">
             <BellRing size={19} />
             <i />
@@ -333,7 +330,7 @@ function AppSidebar({
   );
 
   const logout = () => {
-    localStorage.clear();
+    localStorage.removeItem('token');
     sessionStorage.removeItem('pendingPlan');
     window.location.hash = '/';
     window.location.reload();
@@ -449,7 +446,7 @@ function Landing({ go }: { go: (s: string) => void }) {
             <div className="hero-stage-glow"></div>
             <div className="study-window">
               <div className="study-top">
-                <span>MI RUTA DE HOY</span>
+                <span>VISTA DEMOSTRATIVA · MI RUTA</span>
                 <b>Miércoles · 7:00 PM</b>
               </div>
               <div className="study-subject">
@@ -489,8 +486,8 @@ function Landing({ go }: { go: (s: string) => void }) {
         </section>
         <section className="trust-strip">
           <div>
-            <b>+4,800</b>
-            <span>estudiantes creando su ruta</span>
+            <b>Ruta clara</b>
+            <span>actividades y objetivos en un solo lugar</span>
           </div>
           <div>
             <b>4 etapas</b>
@@ -554,7 +551,7 @@ function Landing({ go }: { go: (s: string) => void }) {
           </div>
           <div className="proof-dashboard">
             <div className="proof-dashboard-top">
-              <span>MI AULA</span>
+              <span>VISTA DEMOSTRATIVA · MI AULA</span>
               <b>Hola, estudiante</b>
               <i>Meta UNT</i>
             </div>
@@ -683,11 +680,14 @@ function Landing({ go }: { go: (s: string) => void }) {
 
 function Auth({ mode, done }: { mode: 'login' | 'register'; done: (u: any) => void }) {
   const [err, setErr] = useState('');
+  const [submitting, setSubmitting] = useState(false);
 
   const submit = async (e: any) => {
     e.preventDefault();
     const f = new FormData(e.target);
     if (mode === 'register' && f.get('password') !== f.get('confirm')) return setErr('Las contraseñas no coinciden');
+    setErr('');
+    setSubmitting(true);
     try {
       const body = Object.fromEntries(f);
       const d = await api('/auth/' + (mode === 'login' ? 'login' : 'register'), 'POST', body);
@@ -697,6 +697,8 @@ function Auth({ mode, done }: { mode: 'login' | 'register'; done: (u: any) => vo
       done(userProfile);
     } catch (e: any) {
       setErr(e.message);
+    } finally {
+      setSubmitting(false);
     }
   };
 
@@ -730,8 +732,8 @@ function Auth({ mode, done }: { mode: 'login' | 'register'; done: (u: any) => vo
         <input name="password" type="password" placeholder="Contraseña (mínimo 6 caracteres)" required />
         {mode === 'register' && <input name="confirm" type="password" placeholder="Confirma tu contraseña" required />}
         {err && <p className="error">{err}</p>}
-        <button>
-          {mode === 'login' ? 'Entrar a mi preparación' : 'Crear mi cuenta'} <ArrowRight size={17} />
+        <button disabled={submitting}>
+          {submitting ? 'Validando...' : mode === 'login' ? 'Entrar a mi preparación' : 'Crear mi cuenta'} <ArrowRight size={17} />
         </button>
         <p className="switch">
           {mode === 'login' ? '¿Aún no tienes cuenta?' : '¿Ya tienes una cuenta?'}{' '}
@@ -753,10 +755,15 @@ function Plans({
 }) {
   const [plans, setPlans] = useState<Plan[]>([]);
   const [semi, setSemi] = useState(false);
+  const [loadingPlans, setLoadingPlans] = useState(true);
+  const [plansError, setPlansError] = useState('');
   const subscription = getActiveSubscription(user);
 
   useEffect(() => {
-    api('/plans').then(setPlans).catch(() => {});
+    api('/plans')
+      .then(setPlans)
+      .catch(error => setPlansError(error.message || 'No pudimos cargar los planes.'))
+      .finally(() => setLoadingPlans(false));
   }, []);
 
   const planRanks: Record<string, number> = {
@@ -803,6 +810,14 @@ function Plans({
         <span>Tu plan define el nivel de personalización y los servicios que se habilitan en tu aula.</span>
       </div>
 
+      {loadingPlans && <div className="module-state-card">Cargando planes disponibles...</div>}
+      {plansError && (
+        <div className="module-state-card error-state">
+          <b>No pudimos mostrar los planes</b>
+          <span>{plansError}</span>
+          <button onClick={() => location.reload()}>Reintentar</button>
+        </div>
+      )}
       <div className="plans-grid premium-plans-grid">
         {plans.map((p, i) => {
           const actualSemi = semi && !!p.precioSemestral;
@@ -810,6 +825,7 @@ function Plans({
           const isCurrent = subscription && (subscription.planId === p.id || subscription.plan?.nombre === p.nombre);
           const thisRank = planRanks[p.nombre] || 0;
           const isUpgrade = subscription && thisRank > currentRank;
+          const isLowerPlan = subscription && thisRank < currentRank;
           const stage = ['PARA CONOCER TU PUNTO DE PARTIDA', 'PARA CONSTRUIR HÁBITO', 'PARA UNA RUTA PERSONALIZADA', 'PARA AVANZAR CON TU FAMILIA'][i] || 'PREPARACIÓN UNT';
 
           return (
@@ -842,7 +858,7 @@ function Plans({
                   </li>
                 ))}
               </ul>
-              <p className="plan-cta-hint">{isCurrent ? 'Estás disfrutando este nivel de acceso.' : p.diasPrueba ? 'Conoce la plataforma antes de decidir.' : 'Activa tu acceso y empieza tu ruta.'}</p>
+              <p className="plan-cta-hint">{isCurrent ? 'Estás disfrutando este nivel de acceso.' : isLowerPlan ? 'Disponible cuando finalice tu periodo actual.' : p.diasPrueba ? 'Conoce la plataforma antes de decidir.' : 'Activa tu acceso y empieza tu ruta.'}</p>
               {isCurrent ? (
                 <button disabled className="btn-plan-active">
                   <CheckCircle2 size={16} /> Plan en uso
@@ -850,9 +866,12 @@ function Plans({
               ) : (
                 <button
                   className={isUpgrade ? 'btn-plan-upgrade' : ''}
+                  disabled={!!isLowerPlan}
                   onClick={() => select(p, actualSemi)}
                 >
-                  {p.diasPrueba
+                  {isLowerPlan
+                    ? 'Disponible al renovar'
+                    : p.diasPrueba
                     ? 'Activar prueba gratis'
                     : isUpgrade
                     ? 'Mejorar a este plan'
@@ -1012,15 +1031,26 @@ function Onboarding({ user, onDone }: { user: any; onDone: (user: any) => void }
 
 function Dashboard({ user, go }: { user: any; go: (x: string) => void }) {
   const [trial, setTrial] = useState(false);
+  const [progress, setProgress] = useState<ProgressSummary | null>(null);
+  const [progressError, setProgressError] = useState('');
   const subscription = getActiveSubscription(user);
   const active = trial || subscription?.estadoAcceso === 'ACTIVADO';
   const planName = active ? subscription?.plan?.nombre || 'Explora UNT' : 'Sin plan activo';
   const carrera = user.studentProfile?.carreraInteres || 'UNT General';
+  const examDate = user.studentProfile?.fechaExamen ? new Date(user.studentProfile.fechaExamen) : null;
+  const daysRemaining = examDate ? Math.max(0, Math.ceil((examDate.getTime() - Date.now()) / 86400000)) : null;
+
+  useEffect(() => {
+    api('/student/progress/summary')
+      .then(setProgress)
+      .catch(error => setProgressError(error.message || 'No pudimos cargar tu avance.'));
+  }, []);
 
   const activate = async () => {
     try {
       await api('/trials/activate', 'POST');
       setTrial(true);
+      window.location.reload();
     } catch (e: any) {
       alert(e.message);
     }
@@ -1028,7 +1058,7 @@ function Dashboard({ user, go }: { user: any; go: (x: string) => void }) {
 
   return (
     <div className="dash">
-      <AppSidebar active="dashboard" go={go} />
+      <AppSidebar active="dashboard" go={go} user={user} />
       <main>
         {/* Banner de Bienvenida y Metas */}
         <section className="dash-student-hero">
@@ -1040,23 +1070,23 @@ function Dashboard({ user, go }: { user: any; go: (x: string) => void }) {
               Hola, {user.nombres}. <em>Vamos por esa vacante.</em>
             </h1>
             <p>
-              Tu preparación estructurada para ingresar a la UNT. Hoy tienes una sesión estratégica de Razonamiento
-              Matemático programada.
+              Tu preparación para ingresar a la UNT está organizada. Tu siguiente paso es{' '}
+              {progress?.nextActivity.title || 'continuar con tu ruta personalizada'}.
             </p>
             <div className="student-badges-row">
               <span className="student-target-badge">
                 <Target size={14} /> Meta UNT: {carrera}
               </span>
               <span className="student-streak-badge">
-                <Flame size={14} /> 4 días seguidos de racha
+                <Flame size={14} /> {progress?.streakDays || 0} {(progress?.streakDays || 0) === 1 ? 'día' : 'días'} de racha
               </span>
             </div>
           </div>
 
           <div className="student-countdown-card">
             <span className="countdown-label">Tiempo para Admisión</span>
-            <div className="countdown-num">48</div>
-            <span className="countdown-sub">DÍAS RESTANTES UNT</span>
+            <div className="countdown-num">{daysRemaining ?? '—'}</div>
+            <span className="countdown-sub">{daysRemaining === null ? 'DEFINE TU FECHA EN EL PERFIL' : 'DÍAS RESTANTES UNT'}</span>
           </div>
         </section>
 
@@ -1081,7 +1111,7 @@ function Dashboard({ user, go }: { user: any; go: (x: string) => void }) {
               <p>
                 {active
                   ? subscription?.plan?.descripcion ||
-                    'Materiales oficiales, simulacros cronometrados y ruta adaptativa guiada por IA para la UNT.'
+                    'Materiales de estudio, simulacros cronometrados y una ruta adaptativa para la UNT.'
                   : 'Desbloquea tu ruta de estudio completa con simulacros y asesoría continua.'}
               </p>
               {active && (
@@ -1130,16 +1160,16 @@ function Dashboard({ user, go }: { user: any; go: (x: string) => void }) {
                 <span className="schedule-pill">HOY · 7:00 PM</span>
               </div>
               <div className="dash-next-body">
-                <span className="subject-tag">RAZONAMIENTO MATEMÁTICO</span>
-                <h2>Patrones y sucesiones numéricas</h2>
-                <p>Sesión guiada · Deducción de términos enésimos y progresiones frecuentes en exámenes UNT.</p>
+                <span className="subject-tag">{progress?.nextActivity.subject || 'RUTA PERSONALIZADA'}</span>
+                <h2>{progress?.nextActivity.title || 'Preparando tu próxima actividad'}</h2>
+                <p>{progress ? `Actividad recomendada · ${progress.nextActivity.durationMinutes} min · ${progress.nextActivity.level}.` : 'Estamos organizando tu siguiente paso de estudio.'}</p>
 
                 <div className="dash-payoff-badge">
                   <Award size={20} color="#15803d" />
                   <div>
-                    <b>+25 pts en Simulación UNT</b>
+                    <b>Actividad prioritaria para tu ruta</b>
                     <span style={{ display: 'block', fontSize: '11.5px', color: '#166534' }}>
-                      Refuerzo de 4 tipos clásicos de preguntas de admisión
+                      Completa la actividad para actualizar tu avance real
                     </span>
                   </div>
                 </div>
@@ -1149,10 +1179,10 @@ function Dashboard({ user, go }: { user: any; go: (x: string) => void }) {
             <div className="dash-next-footer">
               <div className="dash-next-specs">
                 <span>
-                  <Clock size={14} /> 35 min
+                  <Clock size={14} /> {progress?.nextActivity.durationMinutes || 35} min
                 </span>
                 <span>
-                  <TrendingUp size={14} /> Intermedio
+                  <TrendingUp size={14} /> {progress?.nextActivity.level || 'En preparación'}
                 </span>
               </div>
               <button className="btn-enter-aula" style={{ padding: '10px 18px', fontSize: '13px' }} onClick={() => go('learning')}>
@@ -1165,56 +1195,39 @@ function Dashboard({ user, go }: { user: any; go: (x: string) => void }) {
           <section className="dash-stats-card">
             <div className="dash-stats-top">
               <h3>Rendimiento Semanal</h3>
-              <span>+12% vs. meta</span>
+              <span>{progress ? `${progress.weeklyCompleted}/${progress.weeklyGoal} meta semanal` : 'Cargando avance'}</span>
             </div>
 
             <div className="dash-stats-kpis-grid">
               <div className="dash-mini-kpi">
                 <span>AVANCE RUTA</span>
-                <strong>68%</strong>
+                <strong>{progress?.weeklyProgress || 0}%</strong>
               </div>
               <div className="dash-mini-kpi">
                 <span>HORAS TOTALES</span>
-                <strong>6.5 h</strong>
+                <strong>{progress?.weeklyHours || 0} h</strong>
               </div>
               <div className="dash-mini-kpi">
                 <span>TAREAS LISTAS</span>
-                <strong>12</strong>
+                <strong>{progress?.completedActivities || 0}</strong>
               </div>
             </div>
 
             <div className="dash-bar-chart-container">
               <span className="chart-caption">Horas dedicadas por día esta semana</span>
               <div className="dash-weekly-bars">
-                <div className="bar-day-col active">
-                  <div className="bar-day-pillar" style={{ height: '45px' }} title="1.2 horas"></div>
-                  <span>Lun</span>
-                </div>
-                <div className="bar-day-col active">
-                  <div className="bar-day-pillar" style={{ height: '60px' }} title="1.6 horas"></div>
-                  <span>Mar</span>
-                </div>
-                <div className="bar-day-col today">
-                  <div className="bar-day-pillar" style={{ height: '75px' }} title="2.0 horas hoy"></div>
-                  <span>Mié</span>
-                </div>
-                <div className="bar-day-col">
-                  <div className="bar-day-pillar" style={{ height: '10px' }}></div>
-                  <span>Jue</span>
-                </div>
-                <div className="bar-day-col">
-                  <div className="bar-day-pillar" style={{ height: '10px' }}></div>
-                  <span>Vie</span>
-                </div>
-                <div className="bar-day-col">
-                  <div className="bar-day-pillar" style={{ height: '10px' }}></div>
-                  <span>Sáb</span>
-                </div>
-                <div className="bar-day-col">
-                  <div className="bar-day-pillar" style={{ height: '10px' }}></div>
-                  <span>Dom</span>
-                </div>
+                {(progress?.daily || []).map((day, index) => (
+                  <div className={`bar-day-col ${day.minutes ? 'active' : ''} ${index === 6 ? 'today' : ''}`} key={day.date}>
+                    <div
+                      className="bar-day-pillar"
+                      style={{ height: `${Math.max(10, Math.min(78, day.minutes * 1.3))}px` }}
+                      title={`${day.minutes} minutos`}
+                    ></div>
+                    <span>{day.label}</span>
+                  </div>
+                ))}
               </div>
+              {progressError && <p className="module-inline-error">{progressError}</p>}
             </div>
           </section>
 
@@ -1226,7 +1239,7 @@ function Dashboard({ user, go }: { user: any; go: (x: string) => void }) {
                 <div className="path-step-icon">✓</div>
                 <div className="path-step-text">
                   <strong>01. Diagnóstico Inicial</strong>
-                  <span>Completado · Nivel intermedio detectado</span>
+                  <span>{progress?.completedKeys.includes('diagnostic-initial') ? 'Completado · Perfil calibrado' : 'Pendiente · Inicia tu calibración'}</span>
                 </div>
               </div>
 
@@ -1234,7 +1247,7 @@ function Dashboard({ user, go }: { user: any; go: (x: string) => void }) {
                 <div className="path-step-icon">2</div>
                 <div className="path-step-text">
                   <strong>02. Fundamentos y Práctica</strong>
-                  <span>En curso · Módulo 4 de 8 en progreso</span>
+                  <span>{progress?.completedActivities ? `${progress.completedActivities} actividades completadas` : 'Empieza tu primera sesión guiada'}</span>
                 </div>
               </div>
 
@@ -1242,7 +1255,7 @@ function Dashboard({ user, go }: { user: any; go: (x: string) => void }) {
                 <div className="path-step-icon">3</div>
                 <div className="path-step-text">
                   <strong>03. Simulacro General UNT</strong>
-                  <span>Programado · Sábado 9:00 AM (Área {carrera ? 'A' : 'General'})</span>
+                  <span>Disponible en Mi aula · Evaluación general</span>
                 </div>
               </div>
             </div>
@@ -1257,12 +1270,14 @@ function Checkout({
   plan,
   user,
   semestral,
-  done
+  done,
+  go
 }: {
   plan: Plan;
   user: any;
   semestral: boolean;
   done: () => void;
+  go: (page: string) => void;
 }) {
   const [channel, setChannel] = useState('CARD');
   const [modal, setModal] = useState(false);
@@ -1327,7 +1342,7 @@ function Checkout({
 
   return (
     <>
-      <Header go={() => {}} />
+      <Header go={go} />
       <div className="checkout">
         <section>
           <p className="label">FINALIZA TU INSCRIPCIÓN</p>
@@ -1509,10 +1524,18 @@ const activityData: Record<ActivityType, { title: string; questions: ActivityQue
     ]
   },
   simulation: {
-    title: 'Simulacro Oficial UNT · Área Razonamiento',
+    title: 'Simulacro de práctica · Evaluación integral',
     questions: [
       ['Un postulante responde 18 de 24 preguntas correctamente. ¿Qué porcentaje de efectividad logró?', ['65%', '70%', '75%', '80%'], '75%', 'Raz. Matemático'],
-      ['La razón simplificada entre 40 y 60 preguntas es:', ['1:2', '2:3', '3:4', '4:5'], '2:3', 'Raz. Matemático']
+      ['La razón simplificada entre 40 y 60 preguntas es:', ['1:2', '2:3', '3:4', '4:5'], '2:3', 'Raz. Matemático'],
+      ['¿Qué palabra es antónima de “efímero”?', ['Breve', 'Fugaz', 'Duradero', 'Transitorio'], 'Duradero', 'Raz. Verbal'],
+      ['Si todos los mamíferos son vertebrados, ¿qué conclusión es válida?', ['Todo vertebrado es mamífero', 'Ningún mamífero es vertebrado', 'Un mamífero es vertebrado', 'Todo animal es mamífero'], 'Un mamífero es vertebrado', 'Raz. Verbal'],
+      ['La unidad de fuerza en el Sistema Internacional es:', ['Joule', 'Newton', 'Watt', 'Pascal'], 'Newton', 'Física'],
+      ['Un móvil recorre 120 m en 20 s. Su rapidez media es:', ['4 m/s', '5 m/s', '6 m/s', '8 m/s'], '6 m/s', 'Física'],
+      ['El orgánulo encargado principalmente de producir ATP es:', ['Ribosoma', 'Mitocondria', 'Lisosoma', 'Núcleo'], 'Mitocondria', 'Biología'],
+      ['La molécula que almacena la información genética es:', ['ATP', 'ADN', 'Glucosa', 'Colesterol'], 'ADN', 'Biología'],
+      ['El símbolo químico del sodio es:', ['So', 'Sd', 'Na', 'S'], 'Na', 'Química'],
+      ['Una sustancia con pH menor que 7 se considera:', ['Básica', 'Neutra', 'Ácida', 'Metálica'], 'Ácida', 'Química']
     ]
   },
   diagnostic: {
@@ -1632,7 +1655,7 @@ function Runner({
   close
 }: {
   type: ActivityType;
-  finish: () => void;
+  finish: (result: { correctAnswers: number; totalQuestions: number; scorePercent: number; durationMinutes: number; areaBreakdown: Array<{ area: string; correct: number; total: number }> }) => void | Promise<void>;
   close: () => void;
 }) {
   const data = activityData[type];
@@ -1645,6 +1668,7 @@ function Runner({
   const [completed, setCompleted] = useState(false);
   const [submittingDiag, setSubmittingDiag] = useState(false);
   const [diagResult, setDiagResult] = useState<any>(null);
+  const [startedAt] = useState(() => Date.now());
   const q = data.questions[index];
 
   const next = async () => {
@@ -1666,7 +1690,6 @@ function Runner({
 
     if (index === data.questions.length - 1) {
       setCompleted(true);
-      finish();
       if (type === 'diagnostic') {
         setSubmittingDiag(true);
         try {
@@ -1680,6 +1703,20 @@ function Runner({
           setSubmittingDiag(false);
         }
       }
+      const breakdownMap = new Map<string, { correct: number; total: number }>();
+      updatedAnswers.forEach(answer => {
+        const current = breakdownMap.get(answer.materia) || { correct: 0, total: 0 };
+        current.total += 1;
+        if (answer.esCorrecto) current.correct += 1;
+        breakdownMap.set(answer.materia, current);
+      });
+      await finish({
+        correctAnswers: newScore,
+        totalQuestions: data.questions.length,
+        scorePercent: Math.round((newScore / data.questions.length) * 100),
+        durationMinutes: Math.max(1, Math.round((Date.now() - startedAt) / 60000)),
+        areaBreakdown: Array.from(breakdownMap.entries()).map(([area, values]) => ({ area, ...values }))
+      });
     } else {
       setIndex(i => i + 1);
       setChoice('');
@@ -1774,14 +1811,14 @@ function Runner({
                       <span className="insight-badge-red">PRIORIDAD DE REFUERZO</span>
                       <strong>{diagResult?.prioridadRefuerzo || 'Raz. Verbal'}</strong>
                       <p>
-                        Esta área presenta la mayor oportunidad de ganancia de puntos para alcanzar el puntaje de corte de tu carrera meta.
+                        Esta área presenta la mayor oportunidad de mejora frente a la referencia configurada para tu carrera meta.
                       </p>
                     </div>
                     <div className="diag-insight-box strength">
                       <span className="insight-badge-green">MAYOR FORTALEZA</span>
                       <strong>{diagResult?.mayorFortaleza || 'Raz. Matemático'}</strong>
                       <p>
-                        Muestras solvencia y base conceptual consolidada. Mantén la velocidad para asegurar estos puntos en el examen.
+                        Muestras una base conceptual consolidada. Mantén la práctica y revisa tus errores para sostener el resultado.
                       </p>
                     </div>
                   </div>
@@ -1996,6 +2033,33 @@ const FORMULAS_DATA = [
   }
 ];
 
+function downloadMaterialGuide(material: any) {
+  const safeName = String(material.titulo || 'guia-de-estudio')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-zA-Z0-9]+/g, '-')
+    .replace(/^-|-$/g, '')
+    .toLowerCase();
+  const escapeHtml = (value: unknown) => String(value || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+  const formulas = (material.formulas || []).map((formula: string) => `<li><code>${escapeHtml(formula)}</code></li>`).join('');
+  const exercise = material.ejercicioModelo
+    ? `<section><h2>Ejercicio modelo</h2><p><b>Enunciado:</b> ${escapeHtml(material.ejercicioModelo.enunciado)}</p><p><b>Resolución:</b> ${escapeHtml(material.ejercicioModelo.solucion)}</p></section>`
+    : '';
+  const documentHtml = `<!doctype html><html lang="es"><head><meta charset="utf-8"><title>${escapeHtml(material.titulo)}</title><style>body{font-family:Arial,sans-serif;max-width:820px;margin:48px auto;padding:0 28px;color:#12375e;line-height:1.65}header{border-bottom:3px solid #f59e0b;padding-bottom:20px;margin-bottom:32px}small{color:#64748b}h1{font-size:34px;line-height:1.15}h2{margin-top:34px}li{margin:10px 0}code{background:#f1f5f9;padding:4px 7px;border-radius:5px}footer{margin-top:50px;padding-top:18px;border-top:1px solid #dbe4ee;color:#64748b;font-size:12px}@media print{body{margin:0;max-width:none}}</style></head><body><header><b>LA PRE DIGITAL</b><h1>${escapeHtml(material.titulo)}</h1><small>${escapeHtml(material.materia)} · ${escapeHtml(material.semana)}</small></header><p>${escapeHtml(material.descripcion)}</p>${material.sintesis ? `<section><h2>Síntesis teórica</h2><p>${escapeHtml(material.sintesis)}</p></section>` : ''}${formulas ? `<section><h2>Fórmulas y conceptos clave</h2><ul>${formulas}</ul></section>` : ''}${exercise}<footer>Guía digital de estudio · La PRE Digital</footer></body></html>`;
+  const url = URL.createObjectURL(new Blob([documentHtml], { type: 'text/html;charset=utf-8' }));
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = `${safeName || 'guia-de-estudio'}.html`;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
 function MaterialPreviewModal({
   material,
   onClose,
@@ -2014,7 +2078,7 @@ function MaterialPreviewModal({
           <div className="preview-modal-badges">
             <span className="material-subject-badge">{material.materia}</span>
             <span className="material-week-pill">{material.semana}</span>
-            <span className="pdf-tag">{material.formato || 'PDF Oficial'}</span>
+            <span className="pdf-tag">{material.formato || 'Guía digital'}</span>
           </div>
           <button className="upgrade-prompt-close" onClick={onClose} aria-label="Cerrar modal">
             <X size={20} />
@@ -2025,9 +2089,9 @@ function MaterialPreviewModal({
         <p className="preview-modal-desc">{material.descripcion}</p>
 
         <div className="preview-meta-chips">
-          <span><FileText size={14} /> {material.paginas} páginas de contenido</span>
-          <span><Download size={14} /> Peso: {material.tamano}</span>
-          <span><Award size={14} /> Elaborado por especialistas UNT</span>
+          <span><FileText size={14} /> Lectura y práctica sin conexión</span>
+          <span><Download size={14} /> Archivo HTML imprimible</span>
+          <span><Award size={14} /> Contenido estructurado para tu preparación</span>
         </div>
 
         {/* 1. Síntesis Teórica */}
@@ -2090,7 +2154,7 @@ function MaterialPreviewModal({
               onClose();
             }}
           >
-            <Download size={16} /> Descargar Guía Teórica Completa ({material.tamano})
+            <Download size={16} /> Descargar guía para estudiar sin conexión
           </button>
           <button className="btn-close-preview" onClick={onClose}>
             Cerrar previsualización
@@ -2133,7 +2197,7 @@ function FormulaBookModal({ onClose }: { onClose: () => void }) {
         <div className="formula-book-head">
           <div>
             <span className="formula-badge-top">
-              <Sparkles size={14} /> COMPENDIO OFICIAL PREUNIVERSITARIO UNT
+              <Sparkles size={14} /> COMPENDIO DE ESTUDIO PREUNIVERSITARIO
             </span>
             <h2>Formulario Esencial de Admisión</h2>
             <p>Fórmulas, leyes científicas y teoremas de alta frecuencia en el examen ordinario UNT.</p>
@@ -2257,7 +2321,7 @@ function ReportModal({ reportData, onClose }: { reportData: any; onClose: () => 
             </div>
             <div>
               <span className="meta-label">PERIODO ACADÉMICO</span>
-              <strong>Ciclo Intensivo 2026</strong>
+              <strong>Ciclo Intensivo {new Date().getFullYear()}</strong>
               <small>Acceso vigente hasta: {reportData.estudiante.validoHasta}</small>
             </div>
           </div>
@@ -2265,14 +2329,14 @@ function ReportModal({ reportData, onClose }: { reportData: any; onClose: () => 
           <h4 className="report-subheading">1. Resumen Ejecutivo de Desempeño</h4>
           <div className="report-kpi-row">
             <div className="kpi-box">
-              <span>PUNTAJE ACTUAL</span>
-              <b>{reportData.metricas.puntajeActual} pts</b>
-              <small>Meta de corte: {reportData.metricas.puntajeCorte} pts</small>
+              <span>PROMEDIO DE ACTIVIDADES</span>
+              <b>{reportData.metricas.promedio || 0}%</b>
+              <small>{reportData.metricas.puntajeActual ? `Equivalencia referencial: ${reportData.metricas.puntajeActual} pts` : 'Completa una evaluación para obtener tu promedio'}</small>
             </div>
             <div className="kpi-box">
               <span>CONSTANCIA DE ESTUDIO</span>
-              <b style={{ color: '#10b981' }}>{reportData.metricas.asistencia}%</b>
-              <small>{reportData.metricas.sesionesCompletadas} de {reportData.metricas.sesionesTotales || 14} sesiones</small>
+              <b style={{ color: '#10b981' }}>{reportData.metricas.constancia || 0}%</b>
+              <small>{reportData.metricas.sesionesCompletadas} actividades registradas</small>
             </div>
             <div className="kpi-box">
               <span>HORAS SEMANALES</span>
@@ -2280,41 +2344,34 @@ function ReportModal({ reportData, onClose }: { reportData: any; onClose: () => 
               <small>Ritmo recomendado: 6.0 h</small>
             </div>
             <div className="kpi-box">
-              <span>PERCENTIL COMPARATIVO</span>
-              <b style={{ color: '#1e5ee5' }}>{reportData.metricas.percentil}</b>
-              <small>Entre todos los postulantes</small>
+              <span>RACHA DE ESTUDIO</span>
+              <b style={{ color: '#1e5ee5' }}>{reportData.metricas.rachaDias || 0} días</b>
+              <small>Calculada con actividad real registrada</small>
             </div>
           </div>
 
-          <h4 className="report-subheading">2. Diagnóstico por Áreas de Examen UNT</h4>
+          <h4 className="report-subheading">2. Actividades Académicas Recientes</h4>
           <table className="report-table">
             <thead>
               <tr>
-                <th>Área Académica</th>
-                <th>Efectividad</th>
-                <th>Nivel de Preparación</th>
-                <th>Diagnóstico Pedagógico</th>
+                <th>Actividad</th>
+                <th>Tipo</th>
+                <th>Resultado</th>
+                <th>Fecha</th>
               </tr>
             </thead>
             <tbody>
-              {reportData.desgloseAreas.map((d: any) => (
-                <tr key={d.area}>
-                  <td><b>{d.area}</b></td>
-                  <td><strong>{d.efectividad}%</strong></td>
-                  <td>
-                    <span className={`status-tag ${d.efectividad >= 80 ? 'green' : d.efectividad >= 70 ? 'blue' : 'amber'}`}>
-                      {d.nivel}
-                    </span>
-                  </td>
-                  <td>
-                    {d.efectividad >= 80
-                      ? 'Dominio consolidado de fórmulas y velocidad de resolución.'
-                      : d.efectividad >= 70
-                      ? 'Buen fundamento conceptual, fortalecer práctica cronometrada.'
-                      : 'Área prioritaria de refuerzo guiado para alcanzar el corte de admisión.'}
-                  </td>
+              {(reportData.actividadesRecientes || []).map((activity: any) => (
+                <tr key={activity.id || activity.activityKey}>
+                  <td><b>{activity.title}</b><br /><small>{activity.subject || 'Preparación UNT'}</small></td>
+                  <td>{activity.activityType}</td>
+                  <td><strong>{activity.scorePercent}%</strong></td>
+                  <td>{new Date(activity.completedAt).toLocaleDateString('es-PE')}</td>
                 </tr>
               ))}
+              {!(reportData.actividadesRecientes || []).length && (
+                <tr><td colSpan={4}>Aún no hay actividades completadas para este periodo.</td></tr>
+              )}
             </tbody>
           </table>
 
@@ -2331,7 +2388,7 @@ function ReportModal({ reportData, onClose }: { reportData: any; onClose: () => 
             </div>
             <div className="stamp-box">
               <div className="stamp-seal">✓ CERTIFICADO DIGITAL</div>
-              <small>Código de Validación: PRE-DOC-UNT-2026</small>
+              <small>Código de Validación: PRE-DOC-UNT-{new Date().getFullYear()}</small>
             </div>
           </footer>
         </div>
@@ -2343,11 +2400,11 @@ function ReportModal({ reportData, onClose }: { reportData: any; onClose: () => 
 function Learning({ user, go }: { user: any; go: (page: string) => void }) {
   const sub = getActiveSubscription(user);
   const plan = sub?.plan;
-  const learningStorageKey = `learning-progress:${user?.id || 'anonymous'}`;
-  const recommendationStorageKey = `learning-recommendations:${user?.id || 'anonymous'}`;
   const [tab, setTab] = useState('ruta');
-  const [done, setDone] = useState(() => localStorage.getItem(learningStorageKey) === 'completed');
+  const [done, setDone] = useState(false);
   const [runner, setRunner] = useState<null | ActivityType>(null);
+  const [progress, setProgress] = useState<ProgressSummary | null>(null);
+  const [activitySaveError, setActivitySaveError] = useState('');
   const [upgradeModal, setUpgradeModal] = useState<null | {
     feature: string;
     minPlan: string;
@@ -2372,6 +2429,7 @@ function Learning({ user, go }: { user: any; go: (page: string) => void }) {
     user?.studentProfile?.carreraInteres || 'Ingeniería de Sistemas'
   );
   const [loadingAnalytics, setLoadingAnalytics] = useState(false);
+  const [analyticsError, setAnalyticsError] = useState('');
   const [materials, setMaterials] = useState<any[]>([]);
   const [loadingMaterials, setLoadingMaterials] = useState(false);
   const [selectedWeekFilter, setSelectedWeekFilter] = useState('Todas');
@@ -2380,29 +2438,27 @@ function Learning({ user, go }: { user: any; go: (page: string) => void }) {
   const [showFormulaBook, setShowFormulaBook] = useState(false);
   const [materialSearch, setMaterialSearch] = useState('');
   const [activeRecommendation, setActiveRecommendation] = useState<number | null>(null);
-  const [completedRecommendations, setCompletedRecommendations] = useState<number[]>(() => {
-    try {
-      const saved = JSON.parse(localStorage.getItem(recommendationStorageKey) || '[]');
-      return Array.isArray(saved) ? saved.filter(item => Number.isInteger(item)) : [];
-    } catch {
-      return [];
-    }
-  });
+  const [completedRecommendations, setCompletedRecommendations] = useState<number[]>([]);
 
   useEffect(() => {
-    localStorage.setItem(learningStorageKey, done ? 'completed' : 'pending');
-  }, [done, learningStorageKey]);
-
-  useEffect(() => {
-    localStorage.setItem(recommendationStorageKey, JSON.stringify(completedRecommendations));
-  }, [completedRecommendations, recommendationStorageKey]);
+    api('/student/progress/summary')
+      .then((summary: ProgressSummary) => {
+        setProgress(summary);
+        setDone(summary.completedKeys.includes('lesson-patterns'));
+        setCompletedRecommendations(
+          [0, 1, 2].filter(index => summary.completedKeys.includes(`recommendation-${index + 1}`))
+        );
+      })
+      .catch(error => setActivitySaveError(error.message || 'No pudimos cargar tu progreso.'));
+  }, []);
 
   useEffect(() => {
     if (tab === 'analisis') {
       setLoadingAnalytics(true);
+      setAnalyticsError('');
       api(`/student/academic-analytics?carrera=${encodeURIComponent(simulatedCareer)}`)
         .then(setAnalytics)
-        .catch(() => {})
+        .catch(error => setAnalyticsError(error.message || 'No pudimos preparar tu análisis.'))
         .finally(() => setLoadingAnalytics(false));
     }
   }, [tab, simulatedCareer]);
@@ -2472,7 +2528,7 @@ function Learning({ user, go }: { user: any; go: (page: string) => void }) {
       minPlan: 'Ruta UNT',
       description: 'Accede al banco clasificado de preguntas por tema con retroalimentación instantánea y resolución paso a paso.',
       bullets: [
-        'Más de 1,200 preguntas tipo examen UNT clasificadas por área temática',
+        'Banco de práctica clasificado por área temática y nivel',
         'Explicación metodológica paso a paso para dominar patrones de preguntas',
         'Algoritmo adaptativo que refuerza tus temas con menor precisión'
       ]
@@ -2494,7 +2550,7 @@ function Learning({ user, go }: { user: any; go: (page: string) => void }) {
       bullets: [
         'Informes periódicos de avance descargables en PDF para apoderados',
         'Alertas tempranas de constancia y cumplimiento de metas de estudio',
-        'Acompañamiento académico prioritario para asegurar el ingreso'
+        'Acompañamiento académico prioritario para sostener el avance'
       ]
     }
   };
@@ -2502,7 +2558,7 @@ function Learning({ user, go }: { user: any; go: (page: string) => void }) {
   if (!plan)
     return (
       <div className="dash">
-        <AppSidebar active="learning" go={go} />
+        <AppSidebar active="learning" go={go} user={user} />
         <main>
           <section className="empty-learning-card">
             <div className="empty-learning-icon">
@@ -2542,7 +2598,7 @@ function Learning({ user, go }: { user: any; go: (page: string) => void }) {
 
   return (
     <div className="dash">
-      <AppSidebar active="learning" go={go} />
+      <AppSidebar active="learning" go={go} user={user} />
       <main>
         {/* Encabezado del Aula */}
         <section className="aula-header">
@@ -2553,28 +2609,28 @@ function Learning({ user, go }: { user: any; go: (page: string) => void }) {
               <br />
               <em>en movimiento continuo.</em>
             </h1>
-            <p>Todo el contenido estructurado y cronometrado para asegurar tu vacante en la UNT.</p>
+            <p>Contenido estructurado y cronometrado para avanzar con foco hacia tu meta UNT.</p>
           </div>
 
           <div className="aula-kpis">
             <div className="aula-kpi-card">
               <span className="kpi-label">AVANCE DE RUTA</span>
               <div className="kpi-value">
-                {done ? '76%' : '68%'}
-                <small>{done ? '+8% hoy' : '+12% sem'}</small>
+                {progress?.weeklyProgress || 0}%
+                <small>{progress ? `${progress.weeklyCompleted}/${progress.weeklyGoal} esta semana` : 'Cargando'}</small>
               </div>
               <div className="aula-kpi-bar">
-                <div className="aula-kpi-bar-fill" style={{ width: done ? '76%' : '68%' }}></div>
+                <div className="aula-kpi-bar-fill" style={{ width: `${progress?.weeklyProgress || 0}%` }}></div>
               </div>
             </div>
 
             <div className="aula-kpi-card">
               <span className="kpi-label">HORAS DE ESTUDIO</span>
               <div className="kpi-value">
-                6.5 <small style={{ color: '#64748b' }}>h</small>
+                {progress?.weeklyHours || 0} <small style={{ color: '#64748b' }}>h</small>
               </div>
               <div className="aula-kpi-bar">
-                <div className="aula-kpi-bar-fill" style={{ width: '65%', background: '#f59e0b' }}></div>
+                <div className="aula-kpi-bar-fill" style={{ width: `${Math.min(100, ((progress?.weeklyHours || 0) / 6) * 100)}%`, background: '#f59e0b' }}></div>
               </div>
             </div>
           </div>
@@ -2592,7 +2648,7 @@ function Learning({ user, go }: { user: any; go: (page: string) => void }) {
                     feature: label,
                     minPlan: 'un plan superior',
                     description: 'Esta función requiere una suscripción avanzada.',
-                    bullets: ['Desbloquea contenido avanzado y simulaciones oficiales UNT']
+                    bullets: ['Desbloquea contenido avanzado y simulaciones de práctica UNT']
                   });
                 } else {
                   setTab(id);
@@ -2605,6 +2661,7 @@ function Learning({ user, go }: { user: any; go: (page: string) => void }) {
             </button>
           ))}
         </div>
+        {activitySaveError && <div className="module-inline-error">{activitySaveError}</div>}
 
         {/* PESTAÑA: RUTA DE ESTUDIO */}
         {tab === 'ruta' && (
@@ -2620,14 +2677,14 @@ function Learning({ user, go }: { user: any; go: (page: string) => void }) {
                 <h2>Patrones y sucesiones numéricas</h2>
                 <p className="lesson-desc">
                   Aprende a identificar razones aritméticas, leyes de recurrencia y fórmulas de término enésimo
-                  aplicadas a preguntas reales del examen de admisión de la UNT.
+                  aplicadas a preguntas de práctica de nivel preuniversitario.
                 </p>
 
                 <div className="lesson-payoff-box">
                   <div className="lesson-payoff-icon">★</div>
                   <div className="lesson-payoff-text">
-                    <b>Payoff de Puntaje: +25 pts en prueba cuantitativa</b>
-                    <span>Dominarás las 4 variantes de series con mayor frecuencia histórica en el examen UNT.</span>
+                    <b>Objetivo: reconocer y resolver patrones numéricos</b>
+                    <span>Practicarás cuatro variantes de series con retroalimentación inmediata.</span>
                   </div>
                 </div>
               </div>
@@ -2659,12 +2716,12 @@ function Learning({ user, go }: { user: any; go: (page: string) => void }) {
               <div className="module-progress-card">
                 <div className="card-header-row">
                   <h3>Progreso del Módulo</h3>
-                  <span className="card-tag">3 de 4 listos</span>
+                  <span className="card-tag">{Math.min(4, progress?.completedActivities || 0)} de 4 listos</span>
                 </div>
 
                 <div className="module-steps-list">
                   {[
-                    { title: 'Diagnóstico inicial de patrones', sub: 'Evaluación de 5 preguntas multidisciplinarias', isDiag: true, done: true },
+                    { title: 'Diagnóstico inicial', sub: 'Evaluación de 15 preguntas multidisciplinarias', isDiag: true, done: !!progress?.completedKeys.includes('diagnostic-initial') },
                     { title: 'Series aritméticas y lineales', sub: 'Leyes de formación básicas', done: true },
                     { title: 'Sucesiones numéricas y geométricas', sub: 'Término enésimo y sumatorias', current: true },
                     { title: 'Práctica cronometrada UNT', sub: '10 preguntas en 15 minutos', locked: true }
@@ -2722,7 +2779,7 @@ function Learning({ user, go }: { user: any; go: (page: string) => void }) {
                 </div>
                 <h2>Compendios Teóricos y Formularios por Semana</h2>
                 <p>
-                  Descarga las separatas teóricas oficiales estructuradas por el equipo docente de La PRE Digital,
+                  Consulta y descarga guías digitales estructuradas por el equipo de La PRE Digital,
                   con resúmenes de fórmulas, teoría condensada y ejercicios modelo resueltos paso a paso.
                 </p>
               </div>
@@ -2770,16 +2827,16 @@ function Learning({ user, go }: { user: any; go: (page: string) => void }) {
 
             {/* Grid de Materiales */}
             {loadingMaterials ? (
-              <div className="materials-loading">Cargando catálogo de materiales oficiales...</div>
+              <div className="materials-loading">Cargando catálogo de materiales...</div>
             ) : (
               <div className="materials-grid">
                 {(materials.length > 0 ? materials : [
-                  { id: 'mat-01', semana: 'Semana 01', materia: 'Razonamiento Matemático', titulo: 'Sucesiones, Progresiones Aritméticas y Series UNT', descripcion: 'Compendio teórico completo con fórmulas de término enésimo y 35 ejercicios resueltos.', paginas: 18, tamano: '2.4 MB', formato: 'PDF Oficial' },
-                  { id: 'mat-02', semana: 'Semana 01', materia: 'Razonamiento Verbal', titulo: 'Comprensión Lectora y Analogías Semánticas', descripcion: 'Estrategias de análisis de textos científicos DECO de la UNT y relaciones lógicas.', paginas: 14, tamano: '1.8 MB', formato: 'PDF Oficial' },
-                  { id: 'mat-03', semana: 'Semana 02', materia: 'Biología y Anatomía', titulo: 'Biomoléculas Orgánicas y Estructura Celular', descripcion: 'Resumen gráfico de glúcidos, lípidos, proteínas y organelas celulares.', paginas: 22, tamano: '3.1 MB', formato: 'PDF Oficial' },
-                  { id: 'mat-04', semana: 'Semana 02', materia: 'Geometría y Trigonometría', titulo: 'Triángulos, Congruencia y Líneas Notables', descripcion: 'Formulario esencial de teoremas de ángulos interiores, medianas y bisectrices.', paginas: 16, tamano: '2.0 MB', formato: 'PDF Oficial' },
-                  { id: 'mat-05', semana: 'Semana 03', materia: 'Física Preuniversitaria', titulo: 'Cinemática: MRU, MRUV y Caída Libre', descripcion: 'Guía metodológica de vectores de posición, velocidad instantánea y gráficos.', paginas: 20, tamano: '2.7 MB', formato: 'PDF Oficial' },
-                  { id: 'mat-06', semana: 'Semana 03', materia: 'Química General', titulo: 'Estructura Atómica y Configuración Electrónica', descripcion: 'Números cuánticos, principio de Aufbau y distribución por niveles y subniveles.', paginas: 15, tamano: '1.9 MB', formato: 'PDF Oficial' }
+                  { id: 'mat-01', semana: 'Semana 01', materia: 'Razonamiento Matemático', titulo: 'Sucesiones, Progresiones Aritméticas y Series UNT', descripcion: 'Compendio teórico completo con fórmulas de término enésimo y ejercicios resueltos.', paginas: 18, tamano: '2.4 MB', formato: 'Guía digital' },
+                  { id: 'mat-02', semana: 'Semana 01', materia: 'Razonamiento Verbal', titulo: 'Comprensión Lectora y Analogías Semánticas', descripcion: 'Estrategias de análisis de textos científicos y relaciones lógicas.', paginas: 14, tamano: '1.8 MB', formato: 'Guía digital' },
+                  { id: 'mat-03', semana: 'Semana 02', materia: 'Biología y Anatomía', titulo: 'Biomoléculas Orgánicas y Estructura Celular', descripcion: 'Resumen gráfico de glúcidos, lípidos, proteínas y organelas celulares.', paginas: 22, tamano: '3.1 MB', formato: 'Guía digital' },
+                  { id: 'mat-04', semana: 'Semana 02', materia: 'Geometría y Trigonometría', titulo: 'Triángulos, Congruencia y Líneas Notables', descripcion: 'Formulario esencial de teoremas de ángulos interiores, medianas y bisectrices.', paginas: 16, tamano: '2.0 MB', formato: 'Guía digital' },
+                  { id: 'mat-05', semana: 'Semana 03', materia: 'Física Preuniversitaria', titulo: 'Cinemática: MRU, MRUV y Caída Libre', descripcion: 'Guía metodológica de vectores de posición, velocidad instantánea y gráficos.', paginas: 20, tamano: '2.7 MB', formato: 'Guía digital' },
+                  { id: 'mat-06', semana: 'Semana 03', materia: 'Química General', titulo: 'Estructura Atómica y Configuración Electrónica', descripcion: 'Números cuánticos, principio de Aufbau y distribución por niveles y subniveles.', paginas: 15, tamano: '1.9 MB', formato: 'Guía digital' }
                 ])
                   .filter(m => {
                     const matchWeek = selectedWeekFilter === 'Todas' || m.semana === selectedWeekFilter;
@@ -2802,8 +2859,7 @@ function Learning({ user, go }: { user: any; go: (page: string) => void }) {
                       
                       <div className="material-card-meta">
                         <div className="material-specs">
-                          <span><FileText size={13} /> {mat.paginas} págs</span>
-                          <span><Download size={13} /> {mat.tamano}</span>
+                          <span><FileText size={13} /> Lectura guiada</span>
                           <span className="pdf-tag">{mat.formato}</span>
                         </div>
                         <div className="material-actions-row">
@@ -2816,11 +2872,12 @@ function Learning({ user, go }: { user: any; go: (page: string) => void }) {
                           <button
                             className="btn-download-material"
                             onClick={() => {
-                              setDownloadToast(`Descarga iniciada: ${mat.titulo} (${mat.formato})`);
+                              downloadMaterialGuide(mat);
+                              setDownloadToast(`Guía descargada: ${mat.titulo}`);
                               setTimeout(() => setDownloadToast(null), 4000);
                             }}
                           >
-                            <Download size={14} /> Descargar PDF
+                            <Download size={14} /> Descargar guía
                           </button>
                         </div>
                       </div>
@@ -2905,23 +2962,23 @@ function Learning({ user, go }: { user: any; go: (page: string) => void }) {
             <div className="simulation-hero-card">
               <div>
                 <p className="label" style={{ color: '#fbbf24' }}>
-                  SIMULADOR OFICIAL DE ADMISIÓN
+                  SIMULACRO DE PRÁCTICA PREUNIVERSITARIA
                 </p>
                 <h2>Simulacro Integral · Semana 3</h2>
                 <p>
-                  Mide tu rendimiento en condiciones idénticas al examen presencial de la UNT: 60 preguntas cronometradas,
-                  puntuación con penalidad por respuesta errónea y cálculo de percentil inmediato.
+                  Mide tu rendimiento con una práctica integral cronometrada de razonamiento, ciencias y comprensión verbal.
+                  Al terminar, guardaremos tu precisión y actualizaremos el análisis de tu ruta.
                 </p>
 
                 <div className="sim-specs-row">
                   <span>
-                    <Clock size={15} /> 120 minutos
+                    <Clock size={15} /> 20 minutos
                   </span>
                   <span>
-                    <Target size={15} /> 60 preguntas
+                    <Target size={15} /> 10 preguntas
                   </span>
                   <span>
-                    <Award size={15} /> Puntaje sobre 1000 pts
+                    <Award size={15} /> Resultado inmediato
                   </span>
                 </div>
 
@@ -2932,39 +2989,39 @@ function Learning({ user, go }: { user: any; go: (page: string) => void }) {
 
               <div className="sim-orbit-container">
                 <div className="sim-orbit-circle">
-                  <b>60</b>
+                  <b>10</b>
                   <span>PREGUNTAS</span>
                 </div>
-                <small style={{ color: '#cbd5e1' }}>Formato Oficial UNT</small>
+                <small style={{ color: '#cbd5e1' }}>Práctica integral</small>
               </div>
             </div>
 
-            {/* Historial de Simulacros Previos */}
+            {/* Historial real de simulacros */}
             <div className="sim-history-grid">
-              <div className="sim-history-item">
-                <span className="label">SIMULACRO SEMANA 2</span>
-                <h4>Diagnóstico Cuantitativo</h4>
-                <div className="sim-history-stats">
-                  <strong>740 pts</strong>
-                  <small>Percentil 82% (Top 18%)</small>
+              {(progress?.recent || []).filter((item: any) => item.activityType === 'simulation').slice(0, 2).map((item: any) => (
+                <div className="sim-history-item" key={item.id}>
+                  <span className="label">SIMULACRO COMPLETADO</span>
+                  <h4>{item.title}</h4>
+                  <div className="sim-history-stats">
+                    <strong>{item.scorePercent}%</strong>
+                    <small>{item.correctAnswers} de {item.totalQuestions} correctas · {new Date(item.completedAt).toLocaleDateString('es-PE')}</small>
+                  </div>
                 </div>
-              </div>
-
-              <div className="sim-history-item">
-                <span className="label">SIMULACRO SEMANA 1</span>
-                <h4>Razonamiento Integral</h4>
-                <div className="sim-history-stats">
-                  <strong>680 pts</strong>
-                  <small>Percentil 74% (Top 26%)</small>
+              ))}
+              {!(progress?.recent || []).some((item: any) => item.activityType === 'simulation') && (
+                <div className="sim-history-item sim-history-empty">
+                  <span className="label">TU HISTORIAL</span>
+                  <h4>Aún no rindes un simulacro</h4>
+                  <div className="sim-history-stats"><small>Completa el primero para comparar tus próximos resultados.</small></div>
                 </div>
-              </div>
+              )}
 
               <div className="sim-history-item">
                 <span className="label">PRÓXIMO SIMULACRO</span>
-                <h4>Simulacro General Mensual</h4>
+                <h4>Práctica integral disponible</h4>
                 <div className="sim-history-stats">
-                  <strong style={{ color: '#f59e0b' }}>Sábado 9 AM</strong>
-                  <small>En vivo para todos los alumnos</small>
+                  <strong style={{ color: '#f59e0b' }}>10 preguntas</strong>
+                  <small>Puedes empezarla cuando estés listo.</small>
                 </div>
               </div>
             </div>
@@ -2974,14 +3031,20 @@ function Learning({ user, go }: { user: any; go: (page: string) => void }) {
         {/* PESTAÑA: MI ANÁLISIS PREDICTIVO CON IA */}
         {tab === 'analisis' && (
           <section className="analysis-container">
+            {loadingAnalytics && <div className="module-state-card">Calculando tu análisis con tus resultados reales...</div>}
+            {analyticsError && (
+              <div className="module-state-card error-state">
+                <b>No pudimos cargar el análisis</b><span>{analyticsError}</span>
+              </div>
+            )}
             <div className="analysis-main-card">
               <div className="analysis-header-row">
                 <div>
                   <p className="label">DIAGNÓSTICO PREDICTIVO CON IA · META UNT</p>
                   <h2>Tu Desempeño y Proyección de Vacante</h2>
                   <p className="analysis-intro">
-                    Comparamos tus tiempos, aciertos y percentil con la base histórica de cortes de la UNT
-                    para proyectar tus probabilidades de ingreso.
+                    Convertimos tus tiempos y aciertos reales en una estimación de avance frente a la referencia
+                    configurada para tu carrera. Esta orientación no garantiza una vacante.
                   </p>
                 </div>
               </div>
@@ -3015,9 +3078,13 @@ function Learning({ user, go }: { user: any; go: (page: string) => void }) {
                 <div className="score-stat-col">
                   <span className="score-label">PUNTAJE PROYECTADO ACTUAL</span>
                   <strong>
-                    {analytics?.resumen?.puntajeActual || 740} <small>/ 1000 pts</small>
+                    {analytics?.resumen?.puntajeActual ?? '—'} <small>/ 1000 pts</small>
                   </strong>
-                  <span className="score-sub">Percentil: Top 18% general</span>
+                  <span className="score-sub">
+                    {analytics?.resumen?.totalPreguntasSimuladas
+                      ? `Basado en ${analytics.resumen.totalPreguntasSimuladas} respuestas registradas`
+                      : 'Completa una evaluación para crear tu línea base'}
+                  </span>
                 </div>
 
                 <div className="score-gap-col">
@@ -3036,7 +3103,7 @@ function Learning({ user, go }: { user: any; go: (page: string) => void }) {
                       <div
                         className="gap-bar-fill"
                         style={{
-                          width: `${analytics?.resumen?.probabilidadPorcentaje || 80}%`,
+                          width: `${analytics?.resumen?.probabilidadPorcentaje ?? 0}%`,
                           background: analytics?.resumen?.probabilidadColor
                         }}
                       ></div>
@@ -3044,7 +3111,7 @@ function Learning({ user, go }: { user: any; go: (page: string) => void }) {
                     <div className="gap-bar-marks">
                       <span>0 pts</span>
                       <span style={{ color: analytics?.resumen?.probabilidadColor, fontWeight: 700 }}>
-                        {analytics?.resumen?.probabilidadPorcentaje}% alcanzado
+                        {analytics?.resumen?.probabilidadPorcentaje ?? 0}% alcanzado
                       </span>
                       <span>{analytics?.resumen?.puntajeCorte} pts</span>
                     </div>
@@ -3054,10 +3121,12 @@ function Learning({ user, go }: { user: any; go: (page: string) => void }) {
                 <div className="score-stat-col cutoff-col">
                   <span className="score-label">CORTE ({analytics?.carreraSeleccionada})</span>
                   <strong style={{ color: '#1e5ee5' }}>
-                    {analytics?.resumen?.puntajeCorte || 790} <small>pts</small>
+                    {analytics?.resumen?.puntajeCorte ?? '—'} <small>pts</small>
                   </strong>
                   <span className="score-sub">
-                    {analytics?.resumen?.brecha > 0
+                    {analytics?.resumen?.brecha == null
+                      ? 'Aún no hay datos comparables'
+                      : analytics.resumen.brecha > 0
                       ? `Faltan ${analytics?.resumen?.brecha} pts para vacante`
                       : '¡Por encima del corte!'}
                   </span>
@@ -3071,7 +3140,7 @@ function Learning({ user, go }: { user: any; go: (page: string) => void }) {
                 </div>
                 <div className="speed-text-group">
                   <div className="speed-title-row">
-                    <b>Ritmo de Respuesta: {analytics?.velocidad?.tiempoPromedioSegundos}s / pregunta</b>
+                    <b>Ritmo de respuesta: {analytics?.velocidad?.tiempoPromedioSegundos ? `${analytics.velocidad.tiempoPromedioSegundos}s / pregunta` : 'por medir'}</b>
                     <span className="speed-pill">Óptimo UNT: {analytics?.velocidad?.tiempoOptimoSegundos}s</span>
                   </div>
                   <p>{analytics?.velocidad?.recomendacionVelocidad}</p>
@@ -3081,12 +3150,10 @@ function Learning({ user, go }: { user: any; go: (page: string) => void }) {
               {/* Barras de Desglose por Áreas */}
               <div className="analysis-bars-v2">
                 <h4 className="analysis-section-title">Efectividad y Tiempos por Área de Examen</h4>
-                {(analytics?.radarAreas || [
-                  { area: 'Razonamiento Matemático', pct: 82, color: 'blue', aciertos: '29 / 35', tiempoMedio: '1m 45s', estado: 'Dominio fuerte' },
-                  { area: 'Razonamiento Verbal', pct: 65, color: 'amber', aciertos: '20 / 30', tiempoMedio: '1m 15s', estado: 'Prioridad alta de refuerzo' },
-                  { area: 'Ciencias y Biología', pct: 78, color: 'emerald', aciertos: '23 / 30', tiempoMedio: '1m 30s', estado: 'Zona competitiva' },
-                  { area: 'Física y Química', pct: 70, color: 'indigo', aciertos: '18 / 25', tiempoMedio: '2m 05s', estado: 'Progresión favorable' }
-                ]).map((item: any) => (
+                {analytics?.radarAreas?.length === 0 && (
+                  <div className="analytics-empty">Tus resultados por área aparecerán después de completar ejercicios o simulacros.</div>
+                )}
+                {(analytics?.radarAreas || []).map((item: any) => (
                   <div className="analysis-bar-row" key={item.area}>
                     <div className="bar-labels">
                       <span>
@@ -3110,13 +3177,9 @@ function Learning({ user, go }: { user: any; go: (page: string) => void }) {
 
               {/* Temas Prioritarios de Refuerzo con Payoff */}
               <div className="priority-topics-section">
-                <h4 className="analysis-section-title">Temas Prioritarios con Mayor Payoff de Puntos</h4>
+                <h4 className="analysis-section-title">Temas prioritarios según tu actividad</h4>
                 <div className="priority-topics-grid">
-                  {(analytics?.temasPrioritarios || [
-                    { materia: 'Raz. Verbal', tema: 'Analogías y Relaciones Semánticas', payoff: '+18 pts en prueba general', dificultad: 'Intermedio', efectividadActual: '58%', runnerType: 'exercise', accion: 'Resolver bloque' },
-                    { materia: 'Física UNT', tema: 'Cinemática y Dinámica Lineal', payoff: '+15 pts en ciencias', dificultad: 'Avanzado', efectividadActual: '62%', runnerType: 'exercise', accion: 'Resolver bloque' },
-                    { materia: 'Raz. Matemático', tema: 'Sucesiones y Sumatorias Notables', payoff: '+12 pts cuantitativos', dificultad: 'Intermedio', efectividadActual: '74%', runnerType: 'lesson', accion: 'Repasar teoría' }
-                  ]).map((t: any) => (
+                  {(analytics?.temasPrioritarios || []).map((t: any) => (
                     <div className="priority-topic-card" key={t.tema}>
                       <div className="priority-topic-top">
                         <span className="topic-subject-badge">{t.materia}</span>
@@ -3155,11 +3218,7 @@ function Learning({ user, go }: { user: any; go: (page: string) => void }) {
                   <i style={{ width: `${(completedRecommendations.length / 3) * 100}%` }} />
                 </div>
                 <div className="recommendation-list ai-recommendation-list">
-                  {(analytics?.planEstrategicoSemanal || [
-                    'Dedica un bloque de 25 min diarios a razonamiento verbal (comprensión de textos DECO y analogías semánticas).',
-                    'Realiza una prueba corta de 10 ejercicios de física con cronómetro para calibrar el tiempo medio a menos de 1m 50s.',
-                    'Rinde el simulacro general programado para este sábado para validar el avance del percentil.'
-                  ]).map((rec: string, i: number) => {
+                  {(analytics?.planEstrategicoSemanal || []).map((rec: string, i: number) => {
                     const completed = completedRecommendations.includes(i);
                     const meta = [
                       { when: 'HOY', time: '25 MIN', type: 'exercise' as ActivityType, action: 'Practicar ahora' },
@@ -3221,8 +3280,8 @@ function Learning({ user, go }: { user: any; go: (page: string) => void }) {
                     <h3>{guardianInfo ? 'Apoderado Vinculado' : 'Sin Apoderado Registrado'}</h3>
                     <p>
                       {guardianInfo
-                        ? 'Este contacto recibe el reporte semanal oficial y alertas directas.'
-                        : 'Registra los datos de tu padre, madre o tutor para activar el envío de reportes.'}
+                        ? 'Este contacto puede consultar el reporte de avance y las alertas de seguimiento.'
+                        : 'El apoderado debe tener una cuenta registrada. Vincúlalo usando exactamente el mismo correo.'}
                     </p>
                   </div>
                 </div>
@@ -3242,26 +3301,6 @@ function Learning({ user, go }: { user: any; go: (page: string) => void }) {
                 <form className="guardian-edit-form" onSubmit={saveGuardian}>
                   <div className="guardian-form-grid">
                     <div>
-                      <label>Nombres del Apoderado</label>
-                      <input
-                        type="text"
-                        required
-                        placeholder="Ej. Carlos Alberto"
-                        value={guardianForm.nombres}
-                        onChange={e => setGuardianForm({ ...guardianForm, nombres: e.target.value })}
-                      />
-                    </div>
-                    <div>
-                      <label>Apellidos del Apoderado</label>
-                      <input
-                        type="text"
-                        required
-                        placeholder="Ej. Rodríguez Vega"
-                        value={guardianForm.apellidos}
-                        onChange={e => setGuardianForm({ ...guardianForm, apellidos: e.target.value })}
-                      />
-                    </div>
-                    <div>
                       <label>Parentesco / Relación</label>
                       <select
                         value={guardianForm.relacion}
@@ -3273,18 +3312,8 @@ function Learning({ user, go }: { user: any; go: (page: string) => void }) {
                         <option value="Familiar">Familiar / Apoderado</option>
                       </select>
                     </div>
-                    <div>
-                      <label>Teléfono para Alertas WhatsApp</label>
-                      <input
-                        type="tel"
-                        required
-                        placeholder="Ej. 948123456"
-                        value={guardianForm.telefono}
-                        onChange={e => setGuardianForm({ ...guardianForm, telefono: e.target.value })}
-                      />
-                    </div>
                     <div style={{ gridColumn: '1 / -1' }}>
-                      <label>Correo Electrónico para Informes</label>
+                      <label>Correo de la cuenta del apoderado</label>
                       <input
                         type="email"
                         required
@@ -3298,6 +3327,7 @@ function Learning({ user, go }: { user: any; go: (page: string) => void }) {
                     <button type="submit" className="btn-save-guardian" disabled={savingGuardian}>
                       {savingGuardian ? 'Guardando...' : 'Guardar y Vincular Apoderado'}
                     </button>
+                    <small>Si todavía no tiene cuenta, debe registrarse primero eligiendo “Soy apoderado”.</small>
                   </div>
                 </form>
               ) : guardianInfo ? (
@@ -3326,18 +3356,18 @@ function Learning({ user, go }: { user: any; go: (page: string) => void }) {
             <div className="family-grid">
               <div className="family-stat-box">
                 <span className="stat-badge-top">CONSTANCIA</span>
-                <strong style={{ color: '#10b981' }}>94% Asistencia</strong>
-                <p>12 de 14 sesiones y prácticas semanales completadas puntualmente.</p>
+                <strong style={{ color: '#10b981' }}>{reportData?.metricas?.constancia || 0}% semanal</strong>
+                <p>{reportData?.metricas?.sesionesCompletadas || 0} actividades registradas en la ruta.</p>
               </div>
               <div className="family-stat-box">
-                <span className="stat-badge-top">SIMULACRO UNT</span>
-                <strong style={{ color: '#1e5ee5' }}>740 / 1000 pts</strong>
-                <p>Percentil 82% (Top 18%). En trayectoria competitiva hacia la vacante.</p>
+                <span className="stat-badge-top">RENDIMIENTO</span>
+                <strong style={{ color: '#1e5ee5' }}>{reportData?.metricas?.promedio || 0}% promedio</strong>
+                <p>Calculado únicamente con ejercicios y simulacros completados.</p>
               </div>
               <div className="family-stat-box">
-                <span className="stat-badge-top">SEGUIMIENTO</span>
-                <strong style={{ color: '#f59e0b' }}>Alertas Activas</strong>
-                <p>Canal de reporte directo habilitado para coordinaciones académicas.</p>
+                <span className="stat-badge-top">RACHA ACTUAL</span>
+                <strong style={{ color: '#f59e0b' }}>{reportData?.metricas?.rachaDias || 0} días</strong>
+                <p>Seguimiento calculado desde la actividad académica registrada.</p>
               </div>
             </div>
 
@@ -3354,9 +3384,10 @@ function Learning({ user, go }: { user: any; go: (page: string) => void }) {
               <button
                 className="btn-open-report"
                 onClick={() => setShowReportModal(true)}
+                disabled={!reportData}
               >
                 <FileText size={17} />
-                Ver y descargar informe en PDF
+                {reportData ? 'Ver e imprimir informe' : 'Preparando informe...'}
               </button>
             </div>
 
@@ -3395,10 +3426,31 @@ function Learning({ user, go }: { user: any; go: (page: string) => void }) {
         )}
 
         {/* Runner Interactivo */}
-        {runner && <Runner type={runner} finish={() => {
-          setDone(true);
-          if (activeRecommendation !== null) {
-            setCompletedRecommendations(items => items.includes(activeRecommendation) ? items : [...items, activeRecommendation]);
+        {runner && <Runner type={runner} finish={async result => {
+          const recommendationIndex = activeRecommendation;
+          const activityKey = recommendationIndex !== null
+            ? `recommendation-${recommendationIndex + 1}`
+            : ({ lesson: 'lesson-patterns', exercise: 'exercise-adaptive', simulation: 'simulation-week-3', diagnostic: 'diagnostic-initial' } as Record<ActivityType, string>)[runner];
+          try {
+            const saved = await api('/student/activities/complete', 'POST', {
+              activityKey,
+              activityType: runner,
+              title: activityData[runner].title,
+              subject: runner === 'simulation' ? 'Evaluación general' : runner === 'diagnostic' ? 'Diagnóstico UNT' : 'Razonamiento Matemático',
+              totalQuestions: result.totalQuestions,
+              correctAnswers: result.correctAnswers,
+              durationMinutes: result.durationMinutes,
+              areaBreakdown: result.areaBreakdown
+            });
+            setProgress(saved.summary);
+            setDone(saved.summary.completedKeys.includes('lesson-patterns'));
+            setActivitySaveError('');
+            if (recommendationIndex !== null) {
+              setCompletedRecommendations(items => items.includes(recommendationIndex) ? items : [...items, recommendationIndex]);
+            }
+          } catch (error: any) {
+            setActivitySaveError(error.message || 'Terminaste la actividad, pero no pudimos guardar el avance. Reintenta antes de salir.');
+          } finally {
             setActiveRecommendation(null);
           }
         }} close={() => setRunner(null)} />}
@@ -3468,7 +3520,8 @@ function Learning({ user, go }: { user: any; go: (page: string) => void }) {
             material={previewMaterial}
             onClose={() => setPreviewMaterial(null)}
             onDownload={(mat: any) => {
-              setDownloadToast(`Descarga iniciada: ${mat.titulo} (${mat.formato})`);
+              downloadMaterialGuide(mat);
+              setDownloadToast(`Guía descargada: ${mat.titulo}`);
               setTimeout(() => setDownloadToast(null), 4000);
             }}
           />
@@ -3492,12 +3545,14 @@ function GuardianPortal({ user, go }: { user: any; go: (page: string) => void })
   const [linking, setLinking] = useState(false);
   const [reportData, setReportData] = useState<any>(null);
   const [showReport, setShowReport] = useState(false);
+  const [portalError, setPortalError] = useState('');
 
   const loadData = () => {
     setLoading(true);
+    setPortalError('');
     api('/guardians/students')
       .then(d => setStudents(d.students || []))
-      .catch(() => {})
+      .catch(error => setPortalError(error.message || 'No pudimos cargar los estudiantes vinculados.'))
       .finally(() => setLoading(false));
   };
 
@@ -3532,7 +3587,7 @@ function GuardianPortal({ user, go }: { user: any; go: (page: string) => void })
         email: st.email,
         carrera: st.carrera,
         plan: st.plan,
-        validoHasta: 'Vigente Ciclo 2026'
+        validoHasta: st.validoHasta ? new Date(st.validoHasta).toLocaleDateString('es-PE') : 'Sin plan vigente'
       },
       apoderado: {
         nombres: `${user.nombres} ${user.apellidos}`,
@@ -3540,14 +3595,11 @@ function GuardianPortal({ user, go }: { user: any; go: (page: string) => void })
         relacion: 'Apoderado / Tutor'
       },
       metricas: st.metricas,
-      desgloseAreas: [
-        { area: 'Razonamiento Matemático', efectividad: 82, nivel: 'Sobresaliente' },
-        { area: 'Razonamiento Verbal', efectividad: 65, nivel: 'Requiere refuerzo' },
-        { area: 'Ciencias y Biología', efectividad: 78, nivel: 'Competitivo' },
-        { area: 'Física y Química', efectividad: 70, nivel: 'En progresión' }
-      ],
+      actividadesRecientes: st.actividadesRecientes || [],
       observacionPedagogica:
-        'El postulante mantiene una disciplina destacada en razonamiento cuantitativo y ciencias. Se recomienda sostener el ritmo diario de práctica y reforzar la resolución de textos en razonamiento verbal.'
+        st.metricas.sesionesCompletadas
+          ? `El estudiante registra ${st.metricas.sesionesCompletadas} actividades completadas y ${st.metricas.horasEstudio} horas de estudio durante los últimos siete días.`
+          : 'Aún no hay actividades completadas. Se recomienda iniciar el diagnóstico para establecer una línea base.'
     });
     setShowReport(true);
   };
@@ -3568,7 +3620,7 @@ function GuardianPortal({ user, go }: { user: any; go: (page: string) => void })
                 <em>para el Éxito de tus Hijos</em>
               </h1>
               <p>
-                Supervisa el avance, asistencia y rendimiento en simulacros en tiempo real para asegurar el ingreso a la Universidad Nacional de Trujillo.
+                Supervisa el avance, la constancia y el rendimiento registrado para acompañar mejor la preparación hacia la Universidad Nacional de Trujillo.
               </p>
             </div>
             <button className="btn-link-new-student" onClick={() => setShowLinkModal(true)}>
@@ -3578,6 +3630,12 @@ function GuardianPortal({ user, go }: { user: any; go: (page: string) => void })
 
           {loading ? (
             <div className="materials-loading">Cargando información de estudiantes...</div>
+          ) : portalError ? (
+            <div className="module-state-card error-state">
+              <b>No pudimos cargar el portal</b>
+              <span>{portalError}</span>
+              <button onClick={loadData}>Reintentar</button>
+            </div>
           ) : students.length === 0 ? (
             <div className="empty-learning-card">
               <div className="empty-learning-icon">
@@ -3603,16 +3661,17 @@ function GuardianPortal({ user, go }: { user: any; go: (page: string) => void })
                         <span className="st-plan-pill">{st.plan}</span>
                       </p>
                     </div>
-                    <div className="st-status-tag">
-                      <CheckCircle2 size={15} color="#10b981" /> Activo en preparación
+                    <div className={`st-status-tag ${st.plan === 'Sin plan activo' ? 'inactive' : ''}`}>
+                      <CheckCircle2 size={15} color={st.plan === 'Sin plan activo' ? '#94a3b8' : '#10b981'} />
+                      {st.plan === 'Sin plan activo' ? 'Sin plan activo' : 'Activo en preparación'}
                     </div>
                   </div>
 
                   <div className="st-metrics-grid">
                     <div className="st-metric-box">
                       <span className="label">CONSTANCIA</span>
-                      <strong>{st.metricas.asistencia}%</strong>
-                      <small>12 de 14 sesiones completadas</small>
+                      <strong>{st.metricas.constancia}%</strong>
+                      <small>{st.metricas.sesionesCompletadas} actividades registradas</small>
                     </div>
                     <div className="st-metric-box">
                       <span className="label">HORAS DE ESTUDIO</span>
@@ -3621,8 +3680,8 @@ function GuardianPortal({ user, go }: { user: any; go: (page: string) => void })
                     </div>
                     <div className="st-metric-box">
                       <span className="label">PUNTAJE SIMULACRO</span>
-                      <strong style={{ color: '#1e5ee5' }}>{st.metricas.puntajeActual} pts</strong>
-                      <small>Corte meta: {st.metricas.puntajeCorte} pts ({st.metricas.percentil})</small>
+                      <strong style={{ color: '#1e5ee5' }}>{st.metricas.puntajeActual ? `${st.metricas.puntajeActual} pts` : 'Por medir'}</strong>
+                      <small>{st.metricas.promedio ? `${st.metricas.promedio}% de promedio registrado` : 'Completa una evaluación'}</small>
                     </div>
                     <div className="st-metric-box">
                       <span className="label">NIVEL CALIBRADO</span>
@@ -3633,7 +3692,7 @@ function GuardianPortal({ user, go }: { user: any; go: (page: string) => void })
 
                   <div className="st-actions-bar">
                     <button className="btn-view-st-report" onClick={() => openStudentReport(st)}>
-                      <FileText size={16} /> Ver y Descargar Informe Oficial en PDF
+                      <FileText size={16} /> Ver informe y guardar en PDF
                     </button>
                     <a
                       href={`https://wa.me/51948123456?text=Hola%20La%20PRE%20Digital,%20soy%20apoderado%20de%20${encodeURIComponent(st.nombres)}%20y%20deseo%20coordinar%20orientaci%C3%B3n%20acad%C3%A9mica.`}
@@ -3764,18 +3823,22 @@ function Profile({
               Teléfono
               <input name="telefono" defaultValue={user.telefono || ''} />
             </label>
-            <label>
-              Carrera de interés
-              <input name="carreraInteres" defaultValue={p.carreraInteres || ''} />
-            </label>
-            <label>
-              Área a reforzar
-              <input name="areaRefuerzo" defaultValue={p.areaRefuerzo || ''} placeholder="Ej. Matemática" />
-            </label>
-            <label>
-              Nivel educativo
-              <input name="nivelEducativo" defaultValue={p.nivelEducativo || ''} placeholder="Ej. 5to de secundaria" />
-            </label>
+            {user.rol === 'STUDENT' && (
+              <>
+                <label>
+                  Carrera de interés
+                  <input name="carreraInteres" defaultValue={p.carreraInteres || ''} />
+                </label>
+                <label>
+                  Área a reforzar
+                  <input name="areaRefuerzo" defaultValue={p.areaRefuerzo || ''} placeholder="Ej. Matemática" />
+                </label>
+                <label>
+                  Nivel educativo
+                  <input name="nivelEducativo" defaultValue={p.nivelEducativo || ''} placeholder="Ej. 5to de secundaria" />
+                </label>
+              </>
+            )}
           </div>
           {message && <p className={message.includes('correctamente') ? 'success' : 'error'}>{message}</p>}
           <button>
@@ -3789,10 +3852,13 @@ function Profile({
 
 function Payments({ go, user }: { go: (page: string) => void; user: any }) {
   const [items, setItems] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
   useEffect(() => {
     api('/payments/my-payments')
       .then(setItems)
-      .catch(() => {});
+      .catch(err => setError(err.message || 'No pudimos cargar tus pagos.'))
+      .finally(() => setLoading(false));
   }, []);
 
   return (
@@ -3810,7 +3876,11 @@ function Payments({ go, user }: { go: (page: string) => void; user: any }) {
             <h2>Transacciones</h2>
             <button onClick={() => go('plans')}>Ver planes</button>
           </div>
-          {items.length === 0 ? (
+          {loading ? (
+            <p className="empty">Cargando transacciones...</p>
+          ) : error ? (
+            <div className="module-state-card error-state"><b>No pudimos cargar el historial</b><span>{error}</span><button onClick={() => location.reload()}>Reintentar</button></div>
+          ) : items.length === 0 ? (
             <p className="empty">Aún no registras pagos. Elige un plan para iniciar tu preparación.</p>
           ) : (
             <table>
@@ -3846,16 +3916,23 @@ function Payments({ go, user }: { go: (page: string) => void; user: any }) {
   );
 }
 
-function Admin({ section = 'overview' }: { section?: 'overview' | 'users' | 'transactions' }) {
+function Admin({ user, section = 'overview' }: { user: any; section?: 'overview' | 'users' | 'transactions' }) {
   const [users, setUsers] = useState<any[]>([]);
   const [payments, setPayments] = useState<any[]>([]);
   const [filter, setFilter] = useState('');
   const [detail, setDetail] = useState<any>(null);
   const [progress, setProgress] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
 
   useEffect(() => {
-    api('/admin/users').then(setUsers);
-    api('/admin/payments').then(setPayments);
+    Promise.all([api('/admin/users'), api('/admin/payments')])
+      .then(([usersResult, paymentsResult]) => {
+        setUsers(usersResult);
+        setPayments(paymentsResult);
+      })
+      .catch(err => setError(err.message || 'No pudimos cargar la información administrativa.'))
+      .finally(() => setLoading(false));
   }, []);
 
   const go = (page: string) => (location.hash = '/' + page);
@@ -3906,6 +3983,9 @@ function Admin({ section = 'overview' }: { section?: 'overview' | 'users' | 'tra
                 </td>
               </tr>
             ))}
+          {!users.some(u => u.rol === 'STUDENT') && (
+            <tr><td colSpan={5} className="table-empty-cell">Aún no hay estudiantes registrados.</td></tr>
+          )}
         </tbody>
       </table>
     </section>
@@ -3956,6 +4036,9 @@ function Admin({ section = 'overview' }: { section?: 'overview' | 'users' | 'tra
               </td>
             </tr>
           ))}
+          {visible.length === 0 && (
+            <tr><td colSpan={7} className="table-empty-cell">No hay transacciones para este filtro.</td></tr>
+          )}
         </tbody>
       </table>
     </section>
@@ -3963,7 +4046,7 @@ function Admin({ section = 'overview' }: { section?: 'overview' | 'users' | 'tra
 
   return (
     <div className="dash">
-      <AppSidebar active={active} go={go} />
+      <AppSidebar active={active} go={go} user={user} />
       <main>
         <p className="label">PANEL ADMINISTRATIVO</p>
         <h1>
@@ -3971,7 +4054,9 @@ function Admin({ section = 'overview' }: { section?: 'overview' | 'users' | 'tra
           <br />
           <em>{section === 'users' ? 'estudiantes.' : section === 'transactions' ? 'transacciones.' : 'la academia.'}</em>
         </h1>
-        {section === 'overview' && (
+        {loading && <div className="module-state-card">Cargando información de la academia...</div>}
+        {error && <div className="module-state-card error-state"><b>Error al cargar el panel</b><span>{error}</span><button onClick={() => location.reload()}>Reintentar</button></div>}
+        {!loading && !error && section === 'overview' && (
           <div className="admin-overview">
             <article>
               <b>{users.filter(u => u.rol === 'STUDENT').length}</b>
@@ -3987,8 +4072,8 @@ function Admin({ section = 'overview' }: { section?: 'overview' | 'users' | 'tra
             </article>
           </div>
         )}
-        {section !== 'transactions' && usersTable}
-        {section !== 'users' && paymentsTable}
+        {!loading && !error && section !== 'transactions' && usersTable}
+        {!loading && !error && section !== 'users' && paymentsTable}
         {detail && (
           <div className="modal">
             <div>
@@ -4082,7 +4167,7 @@ function App() {
           setUser(u);
         })
         .catch(() => {
-          localStorage.clear();
+          localStorage.removeItem('token');
           setUser(null);
         })
         .finally(() => {
@@ -4167,6 +4252,7 @@ function App() {
         plan={plan}
         user={user}
         semestral={semestral}
+        go={go}
         done={async () => {
           clearPendingPlan();
           setUser(await api('/auth/me'));
@@ -4195,13 +4281,16 @@ function App() {
     return <GuardianPortal user={user} go={go} />;
   }
 
-  if (page === 'learning' && user) return <Learning user={user} go={go} />;
+  if (page === 'learning' && user?.rol === 'STUDENT') return <Learning user={user} go={go} />;
   if (page === 'payments' && user) return <Payments go={go} user={user} />;
   if (page === 'profile' && user) return <Profile user={user} go={go} updated={setUser} />;
-  if (page === 'admin' && user?.rol === 'ADMIN') return <Admin section="overview" />;
-  if (page === 'admin-users' && user?.rol === 'ADMIN') return <Admin section="users" />;
-  if (page === 'admin-transactions' && user?.rol === 'ADMIN') return <Admin section="transactions" />;
-  if (page === 'dashboard' && user) return <Dashboard user={user} go={go} />;
+  if (page === 'admin' && user?.rol === 'ADMIN') return <Admin user={user} section="overview" />;
+  if (page === 'admin-users' && user?.rol === 'ADMIN') return <Admin user={user} section="users" />;
+  if (page === 'admin-transactions' && user?.rol === 'ADMIN') return <Admin user={user} section="transactions" />;
+  if (page === 'dashboard' && user?.rol === 'STUDENT') return <Dashboard user={user} go={go} />;
+
+  if (user?.rol === 'ADMIN') return <Admin user={user} section="overview" />;
+  if (user?.rol === 'STUDENT') return <Dashboard user={user} go={go} />;
 
   return <Landing go={go} />;
 }
