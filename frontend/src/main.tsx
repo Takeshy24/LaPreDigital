@@ -3919,17 +3919,21 @@ function Payments({ go, user }: { go: (page: string) => void; user: any }) {
 function Admin({ user, section = 'overview' }: { user: any; section?: 'overview' | 'users' | 'transactions' }) {
   const [users, setUsers] = useState<any[]>([]);
   const [payments, setPayments] = useState<any[]>([]);
+  const [overview, setOverview] = useState<any>(null);
   const [filter, setFilter] = useState('');
+  const [stageFilter, setStageFilter] = useState('');
+  const [studentSearch, setStudentSearch] = useState('');
   const [detail, setDetail] = useState<any>(null);
   const [progress, setProgress] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
   useEffect(() => {
-    Promise.all([api('/admin/users'), api('/admin/payments')])
-      .then(([usersResult, paymentsResult]) => {
+    Promise.all([api('/admin/users'), api('/admin/payments'), api('/admin/overview')])
+      .then(([usersResult, paymentsResult, overviewResult]) => {
         setUsers(usersResult);
         setPayments(paymentsResult);
+        setOverview(overviewResult);
       })
       .catch(err => setError(err.message || 'No pudimos cargar la información administrativa.'))
       .finally(() => setLoading(false));
@@ -3938,6 +3942,20 @@ function Admin({ user, section = 'overview' }: { user: any; section?: 'overview'
   const go = (page: string) => (location.hash = '/' + page);
   const active = section === 'users' ? 'admin-users' : section === 'transactions' ? 'admin-transactions' : 'admin';
   const visible = payments.filter(p => !filter || p.canalPago === filter || p.estadoTransaccion === filter);
+  const stageMeta: Record<string, { label: string; description: string }> = {
+    BUYER: { label: 'Registrado', description: 'Aún no inició una compra' },
+    LEAD: { label: 'En proceso', description: 'Prueba o pago iniciado' },
+    PAYER: { label: 'Suscriptor', description: 'Pago confirmado' },
+    CUSTOMER: { label: 'Cliente', description: 'Cliente consolidado' },
+    TURNED: { label: 'Convertido', description: 'Conversión completada' }
+  };
+  const studentUsers = users.filter(u => u.rol === 'STUDENT');
+  const filteredStudents = studentUsers.filter(u => {
+    const query = studentSearch.trim().toLowerCase();
+    const matchesSearch = !query || `${u.nombres} ${u.apellidos} ${u.email}`.toLowerCase().includes(query);
+    return matchesSearch && (!stageFilter || u.etapaComercial === stageFilter);
+  });
+  const maxPlanCount = Math.max(1, ...(overview?.operations?.planDistribution || []).map((item: any) => item.count));
 
   const openProgress = async (id: string) => {
     try {
@@ -3950,8 +3968,23 @@ function Admin({ user, section = 'overview' }: { user: any; section?: 'overview'
   const usersTable = (
     <section className="admin-table">
       <div className="table-head">
-        <h2>Estudiantes y avance</h2>
-        <span className="table-note">Selecciona un estudiante para ver su detalle</span>
+        <div>
+          <p className="admin-card-kicker">GESTIÓN ACADÉMICA</p>
+          <h2>Estudiantes y avance</h2>
+          <span className="table-note">Busca, filtra y abre el expediente de cada estudiante.</span>
+        </div>
+        <div className="admin-table-tools">
+          <label className="admin-search">
+            <Search size={16} />
+            <input value={studentSearch} onChange={e => setStudentSearch(e.target.value)} placeholder="Buscar estudiante" />
+          </label>
+          <select aria-label="Filtrar estudiantes por etapa" value={stageFilter} onChange={e => setStageFilter(e.target.value)}>
+            <option value="">Todas las etapas</option>
+            <option value="BUYER">Registrados</option>
+            <option value="LEAD">En proceso</option>
+            <option value="PAYER">Suscriptores</option>
+          </select>
+        </div>
       </div>
       <table>
         <thead>
@@ -3964,16 +3997,16 @@ function Admin({ user, section = 'overview' }: { user: any; section?: 'overview'
           </tr>
         </thead>
         <tbody>
-          {users
-            .filter(u => u.rol === 'STUDENT')
-            .map(u => (
+          {filteredStudents.map(u => (
               <tr key={u.id}>
                 <td>
                   {u.nombres} {u.apellidos}
                 </td>
                 <td>{u.email}</td>
                 <td>
-                  <span className="status">{u.etapaComercial}</span>
+                  <span className={`status stage-${String(u.etapaComercial).toLowerCase()}`} title={u.etapaComercial}>
+                    {stageMeta[u.etapaComercial]?.label || u.etapaComercial}
+                  </span>
                 </td>
                 <td>{new Date(u.createdAt).toLocaleDateString('es-PE')}</td>
                 <td>
@@ -3983,8 +4016,8 @@ function Admin({ user, section = 'overview' }: { user: any; section?: 'overview'
                 </td>
               </tr>
             ))}
-          {!users.some(u => u.rol === 'STUDENT') && (
-            <tr><td colSpan={5} className="table-empty-cell">Aún no hay estudiantes registrados.</td></tr>
+          {filteredStudents.length === 0 && (
+            <tr><td colSpan={5} className="table-empty-cell">No encontramos estudiantes con esos filtros.</td></tr>
           )}
         </tbody>
       </table>
@@ -3994,8 +4027,12 @@ function Admin({ user, section = 'overview' }: { user: any; section?: 'overview'
   const paymentsTable = (
     <section className="admin-table">
       <div className="table-head">
-        <h2>Transacciones</h2>
-        <select aria-label="Filtrar pagos" onChange={e => setFilter(e.target.value)}>
+        <div>
+          <p className="admin-card-kicker">CONTROL FINANCIERO</p>
+          <h2>Transacciones</h2>
+          <span className="table-note">Revisa cobros, canales y estados de confirmación.</span>
+        </div>
+        <select aria-label="Filtrar pagos" value={filter} onChange={e => setFilter(e.target.value)}>
           <option value="">Todos</option>
           <option value="CARD">Tarjeta</option>
           <option value="YAPE">Yape</option>
@@ -4026,7 +4063,7 @@ function Admin({ user, section = 'overview' }: { user: any; section?: 'overview'
               <td>{p.canalPago}</td>
               <td>{money(p.monto)}</td>
               <td>
-                <span className="status">{p.estadoTransaccion}</span>
+                <span className={`status payment-${String(p.estadoTransaccion).toLowerCase()}`}>{p.estadoTransaccion}</span>
               </td>
               <td>{new Date(p.fechaInicio).toLocaleDateString('es-PE')}</td>
               <td>
@@ -4044,36 +4081,173 @@ function Admin({ user, section = 'overview' }: { user: any; section?: 'overview'
     </section>
   );
 
+  const overviewDashboard = overview && (
+    <div className="admin-dashboard-grid">
+      <section className="admin-kpi-grid" aria-label="Indicadores principales">
+        <article className="admin-kpi-card">
+          <div className="admin-kpi-icon blue"><Users size={20} /></div>
+          <span>Estudiantes</span>
+          <b>{overview.students.total}</b>
+          <small><strong>+{overview.students.newThisMonth}</strong> registrados este mes</small>
+        </article>
+        <article className="admin-kpi-card">
+          <div className="admin-kpi-icon orange"><UserCheck size={20} /></div>
+          <span>Servicios activos</span>
+          <b>{overview.students.activeSubscriptions}</b>
+          <small>{overview.students.withoutActivePlan} estudiantes sin plan vigente</small>
+        </article>
+        <article className="admin-kpi-card featured">
+          <div className="admin-kpi-icon light"><CreditCard size={20} /></div>
+          <span>Ingresos del mes</span>
+          <b>{money(overview.revenue.month)}</b>
+          <small>{overview.revenue.monthlyPayments} pagos confirmados · {money(overview.revenue.total)} histórico</small>
+        </article>
+        <article className="admin-kpi-card">
+          <div className="admin-kpi-icon green"><TrendingUp size={20} /></div>
+          <span>Actividad semanal</span>
+          <b>{overview.learning.activeStudents}</b>
+          <small>{overview.learning.activitiesThisWeek} actividades · {overview.learning.studyHoursThisWeek} h de estudio</small>
+        </article>
+      </section>
+
+      <section className="admin-panel admin-funnel-panel">
+        <div className="admin-panel-head">
+          <div>
+            <p className="admin-card-kicker">EMBUDO COMERCIAL</p>
+            <h2>Del registro a la suscripción</h2>
+          </div>
+          <div className="admin-conversion"><b>{overview.students.conversionRate}%</b><span>conversión</span></div>
+        </div>
+        <div className="admin-funnel">
+          {['BUYER', 'LEAD', 'PAYER'].map((stage, index) => {
+            const count = Number(overview.students.stages[stage] || 0);
+            const width = overview.students.total ? Math.max(8, Math.round((count / overview.students.total) * 100)) : 0;
+            return (
+              <div className={`funnel-step step-${index + 1}`} key={stage}>
+                <div className="funnel-copy">
+                  <span>{String(index + 1).padStart(2, '0')}</span>
+                  <div><b>{stageMeta[stage].label}</b><small>{stageMeta[stage].description}</small></div>
+                  <strong>{count}</strong>
+                </div>
+                <div className="funnel-track"><i style={{ width: `${width}%` }} /></div>
+              </div>
+            );
+          })}
+        </div>
+      </section>
+
+      <section className="admin-panel admin-learning-panel">
+        <div className="admin-panel-head">
+          <div><p className="admin-card-kicker">SALUD ACADÉMICA</p><h2>Aprendizaje esta semana</h2></div>
+          <BarChart3 size={22} />
+        </div>
+        <div className="learning-score-ring" style={{ '--score': `${overview.learning.averageScore * 3.6}deg` } as any}>
+          <div><b>{overview.learning.averageScore}%</b><span>promedio</span></div>
+        </div>
+        <div className="admin-mini-stats">
+          <div><b>{overview.learning.activitiesThisWeek}</b><span>actividades completadas</span></div>
+          <div><b>{overview.learning.studyHoursThisWeek} h</b><span>tiempo de estudio</span></div>
+          <div><b>{overview.learning.activeStudents}</b><span>estudiantes activos</span></div>
+        </div>
+      </section>
+
+      <section className="admin-panel admin-plans-panel">
+        <div className="admin-panel-head">
+          <div><p className="admin-card-kicker">CARTERA ACTIVA</p><h2>Distribución por plan</h2></div>
+          <Target size={22} />
+        </div>
+        <div className="admin-plan-bars">
+          {overview.operations.planDistribution.map((item: any) => (
+            <div className="admin-plan-row" key={item.id}>
+              <div><span>{item.nombre}</span><b>{item.count}</b></div>
+              <div className="plan-track"><i style={{ width: `${Math.round((item.count / maxPlanCount) * 100)}%` }} /></div>
+            </div>
+          ))}
+          {overview.operations.planDistribution.length === 0 && <p className="admin-empty-copy">Aún no hay suscripciones activas.</p>}
+        </div>
+      </section>
+
+      <section className="admin-panel admin-alerts-panel">
+        <div className="admin-panel-head">
+          <div><p className="admin-card-kicker">ATENCIÓN PRIORITARIA</p><h2>Operación y seguimiento</h2></div>
+          <BellRing size={22} />
+        </div>
+        <button className="admin-alert-row" onClick={() => go('admin-transactions')}>
+          <span className="alert-icon"><Clock size={17} /></span>
+          <div><b>{overview.operations.pendingPayments} pagos requieren seguimiento</b><small>Iniciados, pendientes o en revisión</small></div>
+          <ArrowRight size={17} />
+        </button>
+        <div className="admin-alert-row static">
+          <span className="alert-icon warning"><Calendar size={17} /></span>
+          <div><b>{overview.operations.expiringSoon} planes vencen en 7 días</b><small>Contacta al estudiante antes de perder continuidad</small></div>
+        </div>
+        <button className="admin-alert-row" onClick={() => go('admin-users')}>
+          <span className="alert-icon blue"><Users size={17} /></span>
+          <div><b>{overview.students.withoutActivePlan} estudiantes sin plan activo</b><small>Revisa su etapa y próxima acción</small></div>
+          <ArrowRight size={17} />
+        </button>
+      </section>
+
+      <section className="admin-panel admin-recent-panel">
+        <div className="admin-panel-head">
+          <div><p className="admin-card-kicker">MOVIMIENTO RECIENTE</p><h2>Últimos estudiantes</h2></div>
+          <button className="admin-text-link" onClick={() => go('admin-users')}>Ver todos <ArrowRight size={15} /></button>
+        </div>
+        <div className="admin-recent-list">
+          {overview.recentStudents.map((student: any) => (
+            <button key={student.id} onClick={() => openProgress(student.id)}>
+              <span className="student-avatar">{student.nombres?.[0]}{student.apellidos?.[0]}</span>
+              <div><b>{student.nombres} {student.apellidos}</b><small>{student.email}</small></div>
+              <span className={`status stage-${String(student.etapaComercial).toLowerCase()}`}>{stageMeta[student.etapaComercial]?.label || student.etapaComercial}</span>
+            </button>
+          ))}
+        </div>
+      </section>
+
+      <section className="admin-panel admin-recent-panel">
+        <div className="admin-panel-head">
+          <div><p className="admin-card-kicker">CAJA</p><h2>Últimos movimientos</h2></div>
+          <button className="admin-text-link" onClick={() => go('admin-transactions')}>Ver todos <ArrowRight size={15} /></button>
+        </div>
+        <div className="admin-recent-list payments">
+          {overview.recentPayments.map((payment: any) => (
+            <div key={payment.id}>
+              <span className="payment-avatar"><CreditCard size={17} /></span>
+              <div><b>{payment.plan.nombre}</b><small>{payment.user.nombres} {payment.user.apellidos} · {payment.canalPago}</small></div>
+              <div className="recent-amount"><b>{money(payment.monto)}</b><span className={`status payment-${String(payment.estadoTransaccion).toLowerCase()}`}>{payment.estadoTransaccion}</span></div>
+            </div>
+          ))}
+          {overview.recentPayments.length === 0 && <p className="admin-empty-copy">Aún no hay movimientos registrados.</p>}
+        </div>
+      </section>
+    </div>
+  );
+
   return (
     <div className="dash">
       <AppSidebar active={active} go={go} user={user} />
-      <main>
-        <p className="label">PANEL ADMINISTRATIVO</p>
-        <h1>
-          {section === 'users' ? 'Avance de' : 'Control de'}
-          <br />
-          <em>{section === 'users' ? 'estudiantes.' : section === 'transactions' ? 'transacciones.' : 'la academia.'}</em>
-        </h1>
+      <main className="admin-main">
+        <header className="admin-page-head">
+          <div>
+            <p className="label">PANEL ADMINISTRATIVO</p>
+            <h1>
+              {section === 'users' ? 'Avance de' : section === 'transactions' ? 'Control de' : 'Pulso de'}
+              <br />
+              <em>{section === 'users' ? 'estudiantes.' : section === 'transactions' ? 'transacciones.' : 'la academia.'}</em>
+            </h1>
+            <p className="admin-page-intro">
+              {section === 'overview' ? 'Decisiones claras sobre crecimiento, aprendizaje y operación, en un solo lugar.' : section === 'users' ? 'Consulta la etapa, el plan y el progreso real de cada postulante.' : 'Supervisa ingresos, canales y pagos que necesitan atención.'}
+            </p>
+          </div>
+          {overview?.generatedAt && section === 'overview' && (
+            <div className="admin-data-status"><span><i /> Datos actualizados</span><b>{new Date(overview.generatedAt).toLocaleString('es-PE', { dateStyle: 'medium', timeStyle: 'short' })}</b></div>
+          )}
+        </header>
         {loading && <div className="module-state-card">Cargando información de la academia...</div>}
         {error && <div className="module-state-card error-state"><b>Error al cargar el panel</b><span>{error}</span><button onClick={() => location.reload()}>Reintentar</button></div>}
-        {!loading && !error && section === 'overview' && (
-          <div className="admin-overview">
-            <article>
-              <b>{users.filter(u => u.rol === 'STUDENT').length}</b>
-              <span>estudiantes registrados</span>
-            </article>
-            <article>
-              <b>{payments.filter(p => p.estadoTransaccion === 'CONFIRMADA').length}</b>
-              <span>pagos confirmados</span>
-            </article>
-            <article>
-              <b>{users.filter(u => u.etapaComercial === 'PAYER').length}</b>
-              <span>servicios activos</span>
-            </article>
-          </div>
-        )}
-        {!loading && !error && section !== 'transactions' && usersTable}
-        {!loading && !error && section !== 'users' && paymentsTable}
+        {!loading && !error && section === 'overview' && overviewDashboard}
+        {!loading && !error && section === 'users' && usersTable}
+        {!loading && !error && section === 'transactions' && paymentsTable}
         {detail && (
           <div className="modal">
             <div>

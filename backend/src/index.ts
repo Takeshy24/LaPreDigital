@@ -552,6 +552,108 @@ app.post('/api/payments/:id/confirm', auth([Role.STUDENT, Role.GUARDIAN]), async
   }
 });
 app.get('/api/payments/my-payments', auth(), async (req: RequestWithUser, res) => res.json(await db.payment.findMany({ where: { userId: req.user!.id }, include: { plan: true, subscription: { include: { student: { include: { user: true } } } } }, orderBy: { fechaInicio: 'desc' } })));
+app.get('/api/admin/overview', auth([Role.ADMIN]), async (_req, res) => {
+  const now = new Date();
+  const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+  const sevenDaysAgo = new Date(now.getTime() - 7 * 86400000);
+  const nextSevenDays = new Date(now.getTime() + 7 * 86400000);
+
+  const [
+    studentsTotal,
+    newStudentsThisMonth,
+    stageGroups,
+    activeSubscriptions,
+    expiringSubscriptions,
+    confirmedRevenue,
+    monthlyRevenue,
+    paymentGroups,
+    weeklyLearning,
+    recentStudents,
+    recentPayments
+  ] = await Promise.all([
+    db.user.count({ where: { rol: Role.STUDENT } }),
+    db.user.count({ where: { rol: Role.STUDENT, createdAt: { gte: monthStart } } }),
+    db.user.groupBy({ by: ['etapaComercial'], where: { rol: Role.STUDENT }, _count: { _all: true } }),
+    db.subscription.findMany({
+      where: { estadoAcceso: AccessStatus.ACTIVADO, fechaInicio: { lte: now }, fechaFin: { gt: now } },
+      select: { studentId: true, fechaFin: true, plan: { select: { id: true, nombre: true } } }
+    }),
+    db.subscription.findMany({
+      where: { estadoAcceso: AccessStatus.ACTIVADO, fechaInicio: { lte: now }, fechaFin: { gt: now, lte: nextSevenDays } },
+      select: { studentId: true, fechaFin: true, plan: { select: { nombre: true } }, student: { select: { user: { select: { nombres: true, apellidos: true, email: true } } } } },
+      orderBy: { fechaFin: 'asc' },
+      take: 5
+    }),
+    db.payment.aggregate({ where: { estadoTransaccion: TransactionStatus.CONFIRMADA }, _sum: { monto: true }, _count: { _all: true } }),
+    db.payment.aggregate({ where: { estadoTransaccion: TransactionStatus.CONFIRMADA, fechaConfirmacion: { gte: monthStart } }, _sum: { monto: true }, _count: { _all: true } }),
+    db.payment.groupBy({ by: ['estadoTransaccion'], _count: { _all: true } }),
+    db.learningProgress.findMany({
+      where: { completedAt: { gte: sevenDaysAgo } },
+      select: { studentId: true, durationMinutes: true, scorePercent: true, totalQuestions: true, completedAt: true }
+    }),
+    db.user.findMany({
+      where: { rol: Role.STUDENT },
+      select: { id: true, nombres: true, apellidos: true, email: true, etapaComercial: true, createdAt: true },
+      orderBy: { createdAt: 'desc' },
+      take: 5
+    }),
+    db.payment.findMany({
+      include: { user: { select: { nombres: true, apellidos: true } }, plan: { select: { nombre: true } } },
+      orderBy: { fechaInicio: 'desc' },
+      take: 5
+    })
+  ]);
+
+  const stageCounts = Object.fromEntries(['BUYER', 'LEAD', 'PAYER', 'CUSTOMER', 'TURNED'].map(stage => [stage, 0]));
+  stageGroups.forEach(item => { stageCounts[item.etapaComercial] = item._count._all; });
+  const activeStudentIds = new Set(activeSubscriptions.map(item => item.studentId));
+  const activeLearnerIds = new Set(weeklyLearning.map(item => item.studentId));
+  const planDistribution = Array.from(activeSubscriptions.reduce((plans, item) => {
+    const current = plans.get(item.plan.nombre) || { id: item.plan.id, nombre: item.plan.nombre, count: 0 };
+    current.count += 1;
+    plans.set(item.plan.nombre, current);
+    return plans;
+  }, new Map<string, { id: string; nombre: string; count: number }>()).values()).sort((a, b) => b.count - a.count);
+  const paymentStatus = Object.fromEntries(paymentGroups.map(item => [item.estadoTransaccion, item._count._all]));
+  const scoredActivities = weeklyLearning.filter(item => item.totalQuestions > 0);
+  const weeklyMinutes = weeklyLearning.reduce((sum, item) => sum + item.durationMinutes, 0);
+  const averageScore = scoredActivities.length
+    ? Math.round(scoredActivities.reduce((sum, item) => sum + item.scorePercent, 0) / scoredActivities.length)
+    : 0;
+
+  return res.json({
+    generatedAt: now,
+    students: {
+      total: studentsTotal,
+      newThisMonth: newStudentsThisMonth,
+      activeSubscriptions: activeStudentIds.size,
+      withoutActivePlan: Math.max(0, studentsTotal - activeStudentIds.size),
+      conversionRate: studentsTotal ? Math.round((Number(stageCounts.PAYER || 0) / studentsTotal) * 100) : 0,
+      stages: stageCounts
+    },
+    revenue: {
+      total: Number(confirmedRevenue._sum.monto || 0),
+      month: Number(monthlyRevenue._sum.monto || 0),
+      confirmedPayments: confirmedRevenue._count._all,
+      monthlyPayments: monthlyRevenue._count._all
+    },
+    learning: {
+      activeStudents: activeLearnerIds.size,
+      activitiesThisWeek: weeklyLearning.length,
+      studyHoursThisWeek: Number((weeklyMinutes / 60).toFixed(1)),
+      averageScore
+    },
+    operations: {
+      expiringSoon: expiringSubscriptions.length,
+      pendingPayments: Number(paymentStatus.INICIADA || 0) + Number(paymentStatus.PENDIENTE || 0) + Number(paymentStatus.EN_REVISION || 0),
+      paymentStatus,
+      planDistribution,
+      expiringSubscriptions
+    },
+    recentStudents,
+    recentPayments
+  });
+});
 app.get('/api/admin/users', auth([Role.ADMIN]), async (_req, res) => res.json(await db.user.findMany({ select: { id: true, nombres: true, apellidos: true, email: true, rol: true, etapaComercial: true, createdAt: true }, orderBy: { createdAt: 'desc' } })));
 app.get('/api/admin/payments', auth([Role.ADMIN]), async (_req, res) => res.json(await db.payment.findMany({
   include: { user: { select: { id: true, nombres: true, apellidos: true, email: true, rol: true } }, plan: true, subscription: true, attempts: { orderBy: { createdAt: 'desc' } } },
@@ -582,6 +684,14 @@ app.get('/api/admin/users/:id/progress', auth([Role.ADMIN]), async (req, res) =>
     },
     payments: user.payments
   });
+});
+app.post('/api/admin/users/:id/reset-password', auth([Role.ADMIN]), async (req, res) => {
+  const input = z.object({ password: z.string().min(10).max(128) }).safeParse(req.body);
+  if (!input.success) return res.status(400).json({ message: 'La nueva contraseña debe tener al menos 10 caracteres.' });
+  const user = await db.user.findUnique({ where: { id: String(req.params.id) }, select: { id: true, email: true } });
+  if (!user) return res.status(404).json({ message: 'Usuario no encontrado.' });
+  await db.user.update({ where: { id: user.id }, data: { passwordHash: await bcrypt.hash(input.data.password, 12) } });
+  return res.json({ ok: true, email: user.email });
 });
 app.get('/api/student/guardian', auth([Role.STUDENT]), requireStudentPlan(4), async (req: RequestWithUser, res) => {
   const studentId = req.user!.id;
